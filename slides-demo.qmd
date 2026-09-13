@@ -1,0 +1,126 @@
+---
+title: "Beta-lactam PK/PD in the critically ill"
+subtitle: "Live target-attainment simulation"
+format:
+  revealjs:
+    width: 1280
+    height: 720
+    slide-number: true
+    embed-resources: false   # keep false: the widget is loaded as a resource
+    theme: default
+resources:
+  - mipd-lab.html
+---
+
+## Why standard dosing fails
+
+Time above MIC is the driver for beta-lactams, and three things move it:
+
+- **renal function** — augmented clearance shortens the time above MIC
+- **infusion duration** — extending the infusion raises trough exposure at
+  the same daily dose
+- **the organism's MIC** — the target moves with the pathogen
+
+The next slides let us change each one and watch attainment respond.
+
+---
+
+## Extended infusion, live {background-iframe="mipd-lab.html?mode=widget&model=pip_kim2022&dose=4000&tau=6&tinf=0.5&mic=16&target=ft100&n=800&seed=20250101&title=Piperacillin%204%20g%20q6h%20%E2%80%94%20100%25%20fT%3EMIC" background-interactive="true"}
+
+::: {.notes}
+Full-slide interactive widget. Walk the infusion duration from 0.5 h to 4 h
+and the class watches the PTA curve at MIC 16 move. Then raise eGFR to 150
+and it falls back again.
+:::
+
+---
+
+## Attainment versus MIC
+
+Standard 0.5 h infusion, 4 g q6h, normal renal function:
+
+<iframe src="mipd-lab.html?mode=widget&panel=pta&summary=0&controls=0&model=pip_kim2022&dose=4000&tau=6&tinf=0.5&mic=16&target=ft100&n=800&seed=1"
+        width="100%" height="420" style="border:0"></iframe>
+
+::: {.fragment}
+The PK/PD breakpoint is where the curve crosses 90% — not where the
+laboratory's susceptibility breakpoint sits.
+:::
+
+---
+
+## Three regimens, same daily dose
+
+<iframe src="mipd-lab.html?mode=widget&panel=pta&summary=0&controls=0&model=pip_kim2022&target=ft100&mic=16&n=800&seed=1&dose=4000&tau=6&tinf=0.5&dose2=4000&tau2=6&tinf2=4&dose3=2000&tau3=4&tinf3=3&title=16%20g/day,%20three%20ways"
+        width="100%" height="430" style="border:0"></iframe>
+
+16 g/day delivered as 4 g q6h over 0.5 h, 4 g q6h over 4 h, and 2 g q4h
+over 3 h.
+
+---
+
+## Augmented renal clearance {background-iframe="mipd-lab.html?mode=widget&model=pip_udy2015&dose=4000&tau=6&tinf=0.33&mic=16&target=ft100&crcl=170&n=800&title=Unbound%20piperacillin,%20CLcr%20170%20mL/min" background-interactive="true"}
+
+::: {.notes}
+Udy's unbound-piperacillin model. Drop CLcr from 170 to 60 in the control
+strip and the same regimen goes from failing to attaining.
+:::
+
+---
+
+## Meropenem: does the dialysis modality change the dose? {background-iframe="mipd-lab.html?mode=widget&model=mem_ojeanson2021&dose=1000&tau=8&tinf=0.5&mic=2&target=ft100&dialysis=semicont&rd=200&n=800&title=Meropenem%201%20g%20q8h%20%E2%80%94%20100%25%20fT%3EMIC" background-interactive="true"}
+
+::: {.notes}
+O'Jeanson's model makes clearance a step function of modality: 11.0 L/h on
+intermittent dialysis, 6.38 L/h on continuous. Switch the modality select
+and the class sees attainment move without any dose changing — the point
+being that "renal replacement therapy" is not one covariate value.
+:::
+
+---
+
+## Vancomycin: an AUC target instead
+
+<iframe src="mipd-lab.html?mode=widget&panel=conc&summary=1&model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&n=800&seed=3&title=Vancomycin%201%20g%20q12h%20%E2%80%94%20AUC%20400%E2%80%93600"
+        width="100%" height="470" style="border:0"></iframe>
+
+---
+
+## How the embedding works
+
+Put `mipd-lab.html` beside the `.qmd` and declare it as a resource:
+
+``` yaml
+resources:
+  - mipd-lab.html
+```
+
+Then either embed it inline —
+
+``` html
+<iframe src="mipd-lab.html?mode=widget&model=pip_kim2022&dose=4000&tau=6&tinf=4&mic=16&target=ft100"
+        width="100%" height="440" style="border:0"></iframe>
+```
+
+— or make it the whole slide, which is the version to use when you want the
+class driving it:
+
+``` markdown
+## Title {background-iframe="mipd-lab.html?mode=widget&..." background-interactive="true"}
+```
+
+::: {.notes}
+`background-interactive="true"` is what lets clicks and typing reach the
+widget instead of being swallowed by reveal.js navigation.
+:::
+
+---
+
+## Reproducibility
+
+Every widget URL carries `seed`, so the curve on the slide is the curve
+that renders in the lecture theatre — and the same URL reproduces the
+figure months later.
+
+The file is self-contained: no CDN, no network, no server. It runs from a
+USB stick.

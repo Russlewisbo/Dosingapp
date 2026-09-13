@@ -1,0 +1,2449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIPD Lab — population PK/PD target attainment</title>
+<style>
+:root{
+  --ink:#15181c; --ink2:#4a5158; --ink3:#7c858e;
+  --line:#d9dee3; --line2:#eef1f4; --bg:#ffffff; --panel:#f7f9fa;
+  /* Okabe-Ito, colour-vision-deficiency safe */
+  --c1:#0072B2; --c2:#E69F00; --c3:#009E73;
+  --mic:#D55E00; --bayes:#CC79A7; --band:rgba(0,114,178,.16);
+  --ok:#1a7f4b; --bad:#b4232a;
+  --fs:14px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font:var(--fs)/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+       "Helvetica Neue",Arial,sans-serif;
+  color:var(--ink); background:var(--bg);
+  -webkit-font-smoothing:antialiased;
+}
+h1{font-size:1.15rem;margin:0 0 2px;letter-spacing:-.01em}
+h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.07em;
+   color:var(--ink3);margin:0 0 8px;font-weight:600}
+a{color:var(--c1)}
+.sub{color:var(--ink2);font-size:.82rem;margin:0}
+
+/* ---------- layout ---------- */
+#wrap{display:grid;grid-template-columns:300px minmax(0,1fr);
+      gap:0;min-height:100vh}
+#side{border-right:1px solid var(--line);background:var(--panel);
+      padding:16px;overflow-y:auto}
+#main{padding:16px 20px;min-width:0}
+header{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:14px}
+
+.card{background:var(--bg);border:1px solid var(--line);border-radius:8px;
+      padding:12px;margin-bottom:12px}
+#side .card{background:var(--bg)}
+
+/* ---------- form controls ---------- */
+label{display:block;font-size:.74rem;font-weight:600;color:var(--ink2);
+      margin-bottom:3px;letter-spacing:.01em}
+select,input[type=number],input[type=text]{
+  width:100%;padding:5px 7px;font:inherit;font-size:.85rem;color:var(--ink);
+  background:var(--bg);border:1px solid var(--line);border-radius:5px}
+select:focus,input:focus{outline:2px solid rgba(0,114,178,.35);outline-offset:-1px}
+.row{display:grid;gap:8px;margin-bottom:9px}
+.r2{grid-template-columns:1fr 1fr}
+.r3{grid-template-columns:1fr 1fr 1fr}
+.r4{grid-template-columns:1fr 1fr 1fr 1fr}
+.inline{display:flex;align-items:center;gap:6px}
+.inline input[type=checkbox]{width:auto;margin:0}
+.inline label{margin:0;font-weight:500}
+button{font:inherit;font-size:.82rem;padding:6px 11px;border-radius:5px;
+       border:1px solid var(--line);background:var(--bg);color:var(--ink);
+       cursor:pointer;font-weight:500}
+button:hover{background:var(--line2)}
+button.primary{background:var(--c1);border-color:var(--c1);color:#fff}
+button.primary:hover{filter:brightness(1.08)}
+button.mini{padding:3px 7px;font-size:.74rem}
+
+/* ---------- readouts ---------- */
+.kv{display:flex;justify-content:space-between;gap:10px;
+    padding:3px 0;border-bottom:1px dotted var(--line);font-size:.83rem}
+.kv:last-child{border-bottom:0}
+.kv span:first-child{color:var(--ink2)}
+.kv span:last-child{font-variant-numeric:tabular-nums;font-weight:600}
+.big{font-size:1.9rem;font-weight:650;font-variant-numeric:tabular-nums;
+     line-height:1.1;letter-spacing:-.02em}
+.big small{font-size:.8rem;font-weight:500;color:var(--ink3)}
+.pill{display:inline-block;padding:1px 7px;border-radius:99px;
+      font-size:.7rem;font-weight:600;letter-spacing:.02em}
+.pill.ok{background:#e4f4ea;color:var(--ok)}
+.pill.bad{background:#fdeaea;color:var(--bad)}
+.note{font-size:.75rem;color:var(--ink2);background:#fffbeb;
+      border-left:3px solid var(--c2);padding:7px 9px;border-radius:0 4px 4px 0;
+      margin:8px 0}
+.cite{font-size:.72rem;color:var(--ink3);line-height:1.4}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line2)}
+th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;
+   color:var(--ink3);font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* ---------- plots ---------- */
+.plot{width:100%;display:block}
+.plotbox{position:relative;margin-bottom:6px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.76rem;
+        color:var(--ink2);margin:2px 0 10px}
+.legend i{display:inline-block;width:16px;height:3px;border-radius:2px;
+          vertical-align:middle;margin-right:5px}
+.legend .sw-band{height:11px;border-radius:2px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:1080px){.grid2{grid-template-columns:1fr}}
+
+/* ---------- widget mode ---------- */
+body.widget #side{display:none}
+body.widget #wrap{grid-template-columns:minmax(0,1fr)}
+body.widget{--fs:16px}
+body.widget #main{padding:10px 12px}
+body.widget header{padding-bottom:6px;margin-bottom:8px}
+body.widget h1{font-size:1.05rem}
+body.widget .card{padding:9px;margin-bottom:8px}
+body.widget .big{font-size:2.5rem}
+body.widget .wstrip{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+body.widget .wstrip > div{min-width:78px}
+body:not(.widget) .wstrip-only{display:none}
+body.widget .full-only{display:none}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <!-- ============ SIDEBAR (full mode) ============ -->
+  <aside id="side">
+    <div class="card">
+      <h2>Model</h2>
+      <div class="row"><div>
+        <label for="drug">Drug</label>
+        <select id="drug"></select>
+      </div></div>
+      <div class="row"><div>
+        <label for="model">Population PK model</label>
+        <select id="model"></select>
+      </div></div>
+      <div id="modelCite" class="cite"></div>
+      <div id="modelNote"></div>
+    </div>
+
+    <div class="card">
+      <h2>Patient</h2>
+      <div class="row r2">
+        <div><label for="wt">Weight (kg)</label><input id="wt" type="number" step="0.5"></div>
+        <div><label for="age">Age (y)</label><input id="age" type="number" step="1"></div>
+      </div>
+      <div class="row r2">
+        <div><label for="sex">Sex</label>
+          <select id="sex"><option value="M">Male</option><option value="F">Female</option></select>
+        </div>
+        <div><label for="ht">Height (cm)</label><input id="ht" type="number" step="1"></div>
+      </div>
+      <div id="scrBlock" class="row r2">
+        <div><label for="scr">Serum creatinine</label><input id="scr" type="number" step="0.01"></div>
+        <div><label for="scrUnit">Units</label>
+          <select id="scrUnit"><option value="mg/dL">mg/dL</option><option value="umol/L">µmol/L</option></select>
+        </div>
+      </div>
+      <div id="cyscBlock" class="row hidden"><div>
+        <label for="cysc">Cystatin C (mg/L)</label><input id="cysc" type="number" step="0.01">
+      </div></div>
+      <div id="ecmoBlock" class="row hidden"><div class="inline">
+        <input id="ecmo" type="checkbox"><label for="ecmo">On ECMO</label>
+      </div></div>
+      <div id="rrtBlock" class="row hidden"><div class="inline">
+        <input id="rrt" type="checkbox"><label for="rrt">On RRT (continuous)</label>
+      </div></div>
+      <div id="dialysisBlock" class="row hidden"><div>
+        <label for="dialysis">Renal replacement therapy</label>
+        <select id="dialysis">
+          <option value="none">None</option>
+          <option value="cont">Continuous dialysis</option>
+          <option value="semicont">Semi-continuous (intermittent)</option>
+        </select>
+      </div></div>
+      <div id="rdBlock" class="row hidden"><div>
+        <label for="rd">Residual diuresis (mL/24 h)</label>
+        <input id="rd" type="number" step="50">
+      </div></div>
+      <div id="renalOut"></div>
+    </div>
+
+    <div class="card">
+      <h2>Regimens</h2>
+      <div id="regimens"></div>
+      <div class="inline" style="margin-top:8px">
+        <button class="mini" id="addReg">+ regimen</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>PK/PD target</h2>
+      <div class="row"><div>
+        <label for="target">Target</label><select id="target"></select>
+      </div></div>
+      <div class="row r2">
+        <div><label for="mic">Reference MIC (mg/L)</label><input id="mic" type="number" step="0.25"></div>
+        <div><label for="ptaThresh">PTA threshold (%)</label><input id="ptaThresh" type="number" step="1" value="90"></div>
+      </div>
+      <div class="row r2">
+        <div><label for="nsim">Simulated subjects</label><input id="nsim" type="number" step="100" value="1000"></div>
+        <div><label for="seed">Random seed</label><input id="seed" type="number" step="1" value="20250101"></div>
+      </div>
+      <div class="inline"><input id="logy" type="checkbox"><label for="logy">Log concentration axis</label></div>
+    </div>
+
+    <div class="card">
+      <h2>MIC distribution (optional)</h2>
+      <label for="micDist">MIC, frequency — one pair per line</label>
+      <textarea id="micDist" rows="4" placeholder="0.5, 12&#10;1, 40&#10;2, 25&#10;4, 8"
+        style="width:100%;font:inherit;font-size:.8rem;padding:6px;
+               border:1px solid var(--line);border-radius:5px"></textarea>
+      <div class="cite" style="margin-top:5px">Paste your own isolate MIC frequencies to
+        compute the cumulative fraction of response. No distribution is assumed.</div>
+      <div id="cfrOut"></div>
+    </div>
+
+    <div class="card">
+      <h2>Embed this view</h2>
+      <button class="mini" id="mkEmbed">Build widget URL</button>
+      <textarea id="embedOut" rows="3" readonly
+        style="width:100%;margin-top:7px;font:inherit;font-size:.7rem;padding:6px;
+               border:1px solid var(--line);border-radius:5px;display:none"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Not implemented</h2>
+      <div id="pendingList" class="cite"></div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main id="main">
+    <header>
+      <h1 id="title">Population PK/PD target attainment</h1>
+      <p class="sub" id="subtitle"></p>
+    </header>
+
+    <!-- compact control strip, widget mode only -->
+    <div class="card wstrip-only" id="wstripCard">
+      <div class="wstrip">
+        <div><label for="wDose">Dose (mg)</label><input id="wDose" type="number" step="250"></div>
+        <div><label for="wTau">Interval (h)</label><input id="wTau" type="number" step="1"></div>
+        <div><label for="wTinf">Infusion (h)</label><input id="wTinf" type="number" step="0.25"></div>
+        <div><label for="wMic">MIC (mg/L)</label><input id="wMic" type="number" step="0.25"></div>
+        <div><label for="wTarget">Target</label><select id="wTarget"></select></div>
+        <div><label for="wRenal" id="wRenalLab">Renal function</label><input id="wRenal" type="number" step="5"></div>
+      </div>
+    </div>
+
+    <div id="panelPta" class="card">
+      <div class="grid2">
+        <div>
+          <h2>Probability of target attainment</h2>
+          <div class="plotbox"><canvas id="cvPta" class="plot"></canvas></div>
+          <div class="legend" id="legPta"></div>
+        </div>
+        <div>
+          <h2>Concentration–time profile</h2>
+          <div class="plotbox"><canvas id="cvConc" class="plot"></canvas></div>
+          <div class="legend" id="legConc"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="panelSummary" class="card">
+      <h2>Attainment summary</h2>
+      <div id="summary"></div>
+    </div>
+
+    <!-- ============ Bayesian forecasting (full mode) ============ -->
+    <div class="card full-only" id="panelTdm">
+      <h2>Bayesian forecasting from TDM samples</h2>
+      <p class="sub">Enter measured concentrations with times on the dosing-record
+        clock (t = 0 at the first dose of the record). The MAP estimate combines
+        these with the model prior.</p>
+      <div class="row r4" style="margin-top:10px">
+        <div><label for="tdmDose">Record: dose (mg)</label><input id="tdmDose" type="number" step="250"></div>
+        <div><label for="tdmTau">Interval (h)</label><input id="tdmTau" type="number" step="1"></div>
+        <div><label for="tdmTinf">Infusion (h)</label><input id="tdmTinf" type="number" step="0.25"></div>
+        <div><label for="tdmN">Doses given</label><input id="tdmN" type="number" step="1" value="4"></div>
+      </div>
+      <table style="margin-top:6px">
+        <thead><tr><th>Time (h)</th><th>Concentration (mg/L)</th><th></th></tr></thead>
+        <tbody id="tdmRows"></tbody>
+      </table>
+      <div class="inline" style="margin-top:8px">
+        <button class="mini" id="addTdm">+ sample</button>
+        <button class="primary" id="runMap">Run MAP estimation</button>
+      </div>
+      <div id="mapOut" style="margin-top:12px"></div>
+    </div>
+
+    <p class="cite" id="footer" style="margin-top:14px"></p>
+  </main>
+</div>
+
+<script>
+/* =====================================================================
+   pkpd-core.js — population PK/PD engine for model-informed precision
+   dosing (MIPD) teaching and target-attainment simulation.
+
+   Pure ES5-compatible JavaScript, zero dependencies, no network access.
+   Runs identically in a browser (full app or slide-embedded widget) and
+   under node (unit tests).
+
+   Contents
+     1. RNG + normal deviates (seeded, reproducible)
+     2. Renal function estimators (Cockcroft-Gault, CKD-EPI)
+     3. Analytic 1- and 2-compartment IV infusion solutions
+     4. Dosing-schedule builder + superposition
+     5. Exposure metrics (%fT>MIC, AUC, Cmin, Cmax)
+     6. Monte Carlo population simulation -> PTA / CFR
+     7. Nelder-Mead + MAP Bayesian individualisation from TDM samples
+
+   Concentration units: mg/L. Time units: hours. Dose units: mg.
+   ===================================================================== */
+(function (root) {
+  'use strict';
+
+  /* ---------------------------------------------------------------
+     1. Seeded RNG.  mulberry32 + Box-Muller.  Seeding matters here:
+     a teaching figure must be identical every time it is rendered.
+     --------------------------------------------------------------- */
+  function rng(seed) {
+    var s = seed >>> 0;
+    return function () {
+      s = (s + 0x6d2b79f5) >>> 0;
+      var t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function normals(n, seed) {
+    var u = rng(seed), out = new Float64Array(n), i = 0;
+    while (i < n) {
+      var a = u(), b = u();
+      if (a < 1e-12) a = 1e-12;
+      var r = Math.sqrt(-2 * Math.log(a)), th = 2 * Math.PI * b;
+      out[i++] = r * Math.cos(th);
+      if (i < n) out[i++] = r * Math.sin(th);
+    }
+    return out;
+  }
+
+  /* ---------------------------------------------------------------
+     2. Renal function.  Serum creatinine accepted in mg/dL or umol/L.
+     --------------------------------------------------------------- */
+  var SCR_UMOL_PER_MGDL = 88.4;
+
+  function scrToMgdl(scr, unit) {
+    return unit === 'umol/L' ? scr / SCR_UMOL_PER_MGDL : scr;
+  }
+
+  // Cockcroft-Gault on total body weight (the form Thomson 2009 and
+  // Udy 2015 used when those models were estimated).
+  function cockcroftGault(o) {
+    var scr = scrToMgdl(o.scr, o.scrUnit);
+    if (!(scr > 0)) return NaN;
+    var cl = ((140 - o.age) * o.wt) / (72 * scr);
+    return o.sex === 'F' ? cl * 0.85 : cl;
+  }
+
+  // CKD-EPI 2021 creatinine equation (race-free), mL/min/1.73m^2.
+  function ckdEpiCr(o) {
+    var scr = scrToMgdl(o.scr, o.scrUnit);
+    if (!(scr > 0)) return NaN;
+    var f = o.sex === 'F',
+        k = f ? 0.7 : 0.9,
+        a = f ? -0.241 : -0.302,
+        r = scr / k;
+    return 142 * Math.pow(Math.min(r, 1), a) * Math.pow(Math.max(r, 1), -1.200) *
+           Math.pow(0.9938, o.age) * (f ? 1.012 : 1);
+  }
+
+  // CKD-EPI 2012 cystatin C equation, mL/min/1.73m^2.  Required by the
+  // Kim 2022 piperacillin model, whose CL covariate is cystatin-C eGFR.
+  function ckdEpiCysC(o) {
+    var cc = o.cysc;
+    if (!(cc > 0)) return NaN;
+    var r = cc / 0.8,
+        e = r <= 1 ? -0.499 : -1.328;
+    return 133 * Math.pow(r, e) * Math.pow(0.996, o.age) *
+           (o.sex === 'F' ? 0.932 : 1);
+  }
+
+  // 4-variable MDRD study equation, mL/min/1.73m^2. Implemented WITHOUT
+  // the historical race coefficient, matching current practice; the
+  // original publication carried a 1.212 multiplier for Black patients,
+  // so a value computed here is the non-Black form of the equation.
+  // Required by the O'Jeanson 2021 meropenem model, whose clearance
+  // covariate is specifically GFR_MDRD.
+  function mdrd(o) {
+    var scr = scrToMgdl(o.scr, o.scrUnit);
+    if (!(scr > 0)) return NaN;
+    return 175 * Math.pow(scr, -1.154) * Math.pow(o.age, -0.203) *
+           (o.sex === 'F' ? 0.742 : 1);
+  }
+
+  function ibwDevine(o) {
+    var inch = o.ht / 2.54 - 60;
+    return (o.sex === 'F' ? 45.5 : 50) + 2.3 * Math.max(0, inch);
+  }
+
+  /* ---------------------------------------------------------------
+     3. Analytic IV infusion solutions.
+
+     Zero-order input of rate R0 (mg/h) for duration Tinf, linear
+     elimination.  Returned function gives central-compartment
+     concentration at time t measured from the START of that infusion.
+
+     2-compartment: with k10=CL/V1, k12=Q/V1, k21=Q/V2 the unit-impulse
+     response is (A*exp(-alpha t) + B*exp(-beta t))/V1 with
+     A=(alpha-k21)/(alpha-beta), B=(k21-beta)/(alpha-beta), A+B=1.
+     Convolving with a constant rate over [0,Tinf] gives the closed
+     forms below.  Verified against RK4 integration of the ODE system
+     in test-core.mjs.
+     --------------------------------------------------------------- */
+  function micro2(p) {
+    var k10 = p.CL / p.V1, k12 = p.Q / p.V1, k21 = p.Q / p.V2,
+        a1 = k10 + k12 + k21, a0 = k10 * k21,
+        disc = Math.sqrt(Math.max(0, a1 * a1 - 4 * a0));
+    return {
+      k10: k10, k12: k12, k21: k21,
+      alpha: (a1 + disc) / 2,
+      beta: (a1 - disc) / 2
+    };
+  }
+
+  // Response to ONE infusion, as a function of time since its start.
+  function infusionResponse(p, ncmt, R0, Tinf) {
+    if (ncmt === 1) {
+      var k = p.CL / p.V1, base = R0 / (p.V1 * k);
+      return function (t) {
+        if (t <= 0) return 0;
+        if (t <= Tinf) return base * (1 - Math.exp(-k * t));
+        return base * (1 - Math.exp(-k * Tinf)) * Math.exp(-k * (t - Tinf));
+      };
+    }
+    var m = micro2(p),
+        al = m.alpha, be = m.beta, k21 = m.k21, d = al - be;
+    // Guard the (numerically rare) near-degenerate root case.
+    if (!(Math.abs(d) > 1e-12)) {
+      return infusionResponse({ CL: p.CL, V1: p.V1 }, 1, R0, Tinf);
+    }
+    var cA = (al - k21) / (al * d) * (R0 / p.V1),
+        cB = (k21 - be) / (be * d) * (R0 / p.V1);
+    return function (t) {
+      if (t <= 0) return 0;
+      if (t <= Tinf) {
+        return cA * (1 - Math.exp(-al * t)) + cB * (1 - Math.exp(-be * t));
+      }
+      var u = t - Tinf;
+      return cA * (1 - Math.exp(-al * Tinf)) * Math.exp(-al * u) +
+             cB * (1 - Math.exp(-be * Tinf)) * Math.exp(-be * u);
+    };
+  }
+
+  /* ---------------------------------------------------------------
+     4. Dosing schedules.
+
+     A regimen is {dose (mg), tau (h), tinf (h), nDoses} for intermittent
+     or extended infusion, or {mode:'ci', dose24 (mg/24h), ...} for
+     continuous infusion.  Everything downstream consumes the resulting
+     event list, so irregular real-world dosing records work too.
+     --------------------------------------------------------------- */
+  function buildSchedule(reg) {
+    var ev = [], i;
+    if (reg.mode === 'ci') {
+      var hours = reg.duration || 24 * (reg.days || 3);
+      // Optional loading dose in front of the continuous infusion.
+      if (reg.loadingDose > 0) {
+        var lt = reg.loadingTinf > 0 ? reg.loadingTinf : 0.5;
+        ev.push({ t0: 0, tinf: lt, rate: reg.loadingDose / lt });
+      }
+      ev.push({ t0: 0, tinf: hours, rate: reg.dose24 / 24 });
+      return { events: ev, tau: hours, tEnd: hours, ci: true };
+    }
+    var n = reg.nDoses || 1,
+        tinf = Math.max(reg.tinf, 1e-6);
+    for (i = 0; i < n; i++) {
+      ev.push({ t0: i * reg.tau, tinf: tinf, rate: reg.dose / tinf });
+    }
+    return { events: ev, tau: reg.tau, tEnd: (n - 1) * reg.tau + reg.tau, ci: false };
+  }
+
+  // Number of doses needed to be at (practical) steady state, then a few
+  // extra so the evaluation interval is genuinely the SS interval.
+  function dosesToSteadyState(p, ncmt, tau) {
+    var thalf;
+    if (ncmt === 1) {
+      thalf = Math.LN2 / (p.CL / p.V1);
+    } else {
+      thalf = Math.LN2 / micro2(p).beta;
+    }
+    if (!isFinite(thalf) || thalf <= 0) thalf = tau;
+    return Math.max(3, Math.min(200, Math.ceil((5 * thalf) / tau) + 2));
+  }
+
+  function concFn(p, ncmt, sched) {
+    var fns = sched.events.map(function (e) {
+      return { t0: e.t0, f: infusionResponse(p, ncmt, e.rate, e.tinf) };
+    });
+    return function (t) {
+      var c = 0;
+      for (var i = 0; i < fns.length; i++) {
+        if (t > fns[i].t0) c += fns[i].f(t - fns[i].t0);
+      }
+      return c;
+    };
+  }
+
+  /* ---------------------------------------------------------------
+     5. Exposure metrics over an evaluation window [tA, tB].
+     --------------------------------------------------------------- */
+  function metrics(cf, tA, tB, opts) {
+    var nGrid = (opts && opts.nGrid) || 400,
+        fu = (opts && opts.fu != null) ? opts.fu : 1,
+        mic = (opts && opts.mic) || 0,
+        h = (tB - tA) / nGrid,
+        above = 0, auc = 0, cmin = Infinity, cmax = -Infinity,
+        prev = null, i, t, c;
+    for (i = 0; i <= nGrid; i++) {
+      t = tA + i * h;
+      c = cf(t);
+      if (c < cmin) cmin = c;
+      if (c > cmax) cmax = c;
+      if (prev !== null) auc += 0.5 * (prev + c) * h;
+      // Fraction of interval with free concentration above MIC: count
+      // sub-interval midpoints rather than nodes (unbiased at the ends).
+      if (prev !== null) {
+        var mid = fu * 0.5 * (prev + c);
+        if (mid > mic) above += 1;
+      }
+      prev = c;
+    }
+    var span = tB - tA;
+    return {
+      tAbove: (above / nGrid) * 100,          // % of interval, free drug
+      auc: auc,                                // total-drug AUC over window
+      auc24: auc * (24 / span),
+      fauc24: auc * (24 / span) * fu,
+      cmin: cmin, cmax: cmax,
+      fcmin: cmin * fu, fcmax: cmax * fu,
+      cavg: auc / span
+    };
+  }
+
+  /* ---------------------------------------------------------------
+     6. Model spec handling + Monte Carlo population simulation.
+
+     A model spec is DATA (see models.js).  Required fields:
+       ncmt, fu, params(cov) -> {CL,V1[,Q,V2]}, iiv {name: omega},
+       err {add, prop}
+     iivScale: 'omega' (reported % is the log-scale SD, the usual
+     NONMEM exponential-model convention) or 'cv' (reported % is a true
+     coefficient of variation, converted by sqrt(ln(1+CV^2))).
+     --------------------------------------------------------------- */
+  function omegaOf(model, key) {
+    var w = (model.iiv && model.iiv[key]) || 0;
+    if (!w) return 0;
+    if (model.iivScale === 'cv') return Math.sqrt(Math.log(1 + w * w));
+    return w;
+  }
+
+  function iivKeys(model) {
+    return Object.keys(model.iiv || {});
+  }
+
+  /* ---- Correlated between-subject variability ----------------------
+     Some published models report off-diagonal OMEGA terms (e.g. Gijsen
+     2021 reports a CL-Vc IIV correlation). Sampling those parameters
+     independently would understate the joint spread of exposure, so the
+     covariance matrix is built explicitly and factorised.
+
+     model.iivCorr is a list of [paramA, paramB, rho] triples. With none
+     supplied the covariance is diagonal and this reduces exactly to
+     independent sampling.
+     ------------------------------------------------------------------ */
+  function iivCov(model) {
+    var keys = iivKeys(model), n = keys.length, i, j,
+        om = keys.map(function (k) { return omegaOf(model, k); }),
+        S = [];
+    for (i = 0; i < n; i++) {
+      S.push(new Array(n));
+      for (j = 0; j < n; j++) S[i][j] = (i === j) ? om[i] * om[i] : 0;
+    }
+    var corr = model.iivCorr || [];
+    for (i = 0; i < corr.length; i++) {
+      var a = keys.indexOf(corr[i][0]), b = keys.indexOf(corr[i][1]),
+          r = corr[i][2];
+      if (a < 0 || b < 0 || a === b) continue;
+      // Clamp to a valid correlation; a published point estimate plus a
+      // separately published omega can imply |rho| slightly above 1.
+      if (r > 0.999) r = 0.999;
+      if (r < -0.999) r = -0.999;
+      S[a][b] = S[b][a] = r * om[a] * om[b];
+    }
+    return { keys: keys, om: om, S: S };
+  }
+
+  // Lower-triangular Cholesky factor, with escalating jitter if the
+  // supplied matrix is not quite positive definite.
+  function cholesky(S) {
+    var n = S.length, jit = 0, attempt, i, j, k;
+    for (attempt = 0; attempt < 8; attempt++) {
+      var L = [], okFlag = true;
+      for (i = 0; i < n; i++) L.push(new Array(n).fill(0));
+      for (i = 0; i < n && okFlag; i++) {
+        for (j = 0; j <= i; j++) {
+          var sum = S[i][j] + (i === j ? jit : 0);
+          for (k = 0; k < j; k++) sum -= L[i][k] * L[j][k];
+          if (i === j) {
+            if (sum <= 0) { okFlag = false; break; }
+            L[i][j] = Math.sqrt(sum);
+          } else {
+            L[i][j] = sum / L[j][j];
+          }
+        }
+      }
+      if (okFlag) return L;
+      jit = jit === 0 ? 1e-10 : jit * 100;
+    }
+    // Fall back to the diagonal, which is always factorisable.
+    var D = [];
+    for (i = 0; i < n; i++) {
+      D.push(new Array(n).fill(0));
+      D[i][i] = Math.sqrt(Math.max(1e-12, S[i][i]));
+    }
+    return D;
+  }
+
+  // Quadratic form x' S^-1 x via forward substitution on L y = x.
+  function mahalanobis2(L, x) {
+    var n = L.length, y = new Array(n), i, k;
+    for (i = 0; i < n; i++) {
+      var s = x[i];
+      for (k = 0; k < i; k++) s -= L[i][k] * y[k];
+      y[i] = s / L[i][i];
+    }
+    var q = 0;
+    for (i = 0; i < n; i++) q += y[i] * y[i];
+    return q;
+  }
+
+  // Apply a vector of etas (indexed like iivKeys) to typical parameters.
+  function withEtas(model, typ, etas) {
+    var keys = iivKeys(model), p = {}, k;
+    for (k in typ) if (Object.prototype.hasOwnProperty.call(typ, k)) p[k] = typ[k];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      if (p[key] != null) p[key] = p[key] * Math.exp(etas[i] || 0);
+    }
+    return p;
+  }
+
+  function samplePopulation(model, cov, n, seed) {
+    var cv = iivCov(model), keys = cv.keys, nk = keys.length,
+        L = cholesky(cv.S),
+        typ = model.params(cov),
+        z = normals(n * Math.max(1, nk), seed || 12345),
+        out = new Array(n), s, i, j;
+    for (s = 0; s < n; s++) {
+      var etas = new Array(nk);
+      for (i = 0; i < nk; i++) {
+        // eta = L z  gives the target covariance structure.
+        var e = 0;
+        for (j = 0; j <= i; j++) e += L[i][j] * z[s * nk + j];
+        etas[i] = e;
+      }
+      out[s] = withEtas(model, typ, etas);
+    }
+    return out;
+  }
+
+  function percentile(sorted, q) {
+    if (!sorted.length) return NaN;
+    var idx = (sorted.length - 1) * q, lo = Math.floor(idx), hi = Math.ceil(idx);
+    return lo === hi ? sorted[lo] : sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
+  }
+
+  /* Does one simulated subject meet the target?
+     Target types:
+       ftmic   %fT>MIC   >= threshold
+       aucmic  fAUC24/MIC >= threshold
+       auc     AUC24 within [lo, hi]   (vancomycin 400-600 mg*h/L)
+       cmin    Cmin within [lo, hi]
+       cminmic fCmin/MIC >= threshold
+  */
+  function meetsTarget(m, target, mic) {
+    switch (target.type) {
+      case 'ftmic':   return m.tAbove >= target.threshold - 1e-9;
+      case 'aucmic':  return mic > 0 && (m.fauc24 / mic) >= target.threshold;
+      case 'auc':     return m.auc24 >= target.lo && m.auc24 <= target.hi;
+      case 'cmin':    return m.cmin >= target.lo && m.cmin <= target.hi;
+      case 'cminmic': return mic > 0 && (m.fcmin / mic) >= target.threshold;
+      default: return false;
+    }
+  }
+
+  /* Full population simulation.
+     Returns the concentration-time summary (median + prediction interval)
+     and, for each MIC on the ladder, the probability of target attainment.
+  */
+  function simulate(cfg) {
+    var model = cfg.model,
+        cov = cfg.cov,
+        reg = cfg.regimen,
+        n = cfg.n || 1000,
+        target = cfg.target,
+        mics = cfg.mics || [],
+        micEff = (target.type === 'ftmic' && target.micMultiplier)
+                   ? target.micMultiplier : 1,
+        subjects = samplePopulation(model, cov, n, cfg.seed),
+        typ = model.params(cov);
+
+    // Dose the schedule out to steady state unless the caller pinned
+    // nDoses (first-dose teaching cases legitimately want nDoses=1).
+    var regEff = {};
+    for (var k in reg) if (Object.prototype.hasOwnProperty.call(reg, k)) regEff[k] = reg[k];
+    if (regEff.mode !== 'ci' && !regEff.nDoses) {
+      regEff.nDoses = dosesToSteadyState(typ, model.ncmt, regEff.tau);
+    }
+    var sched = buildSchedule(regEff),
+        tau = sched.tau,
+        // Evaluation window = last dosing interval (steady state).
+        tA = sched.ci ? Math.max(0, sched.tEnd - 24) : sched.tEnd - tau,
+        tB = sched.tEnd;
+
+    // Concentration-time profile grid over the evaluation window.
+    var nT = cfg.nT || 120, times = new Array(nT + 1), i, j;
+    for (i = 0; i <= nT; i++) times[i] = tA + (i * (tB - tA)) / nT;
+
+    var curves = new Array(n), perSubj = new Array(n);
+    for (j = 0; j < n; j++) {
+      var cf = concFn(subjects[j], model.ncmt, sched),
+          row = new Float64Array(nT + 1);
+      for (i = 0; i <= nT; i++) row[i] = cf(times[i]);
+      curves[j] = row;
+      perSubj[j] = { cf: cf, p: subjects[j] };
+    }
+
+    // Pointwise percentiles across the population.
+    var med = new Array(nT + 1), lo = new Array(nT + 1), hi = new Array(nT + 1);
+    for (i = 0; i <= nT; i++) {
+      var col = new Array(n);
+      for (j = 0; j < n; j++) col[j] = curves[j][i];
+      col.sort(function (a, b) { return a - b; });
+      med[i] = percentile(col, 0.5);
+      lo[i] = percentile(col, 0.05);
+      hi[i] = percentile(col, 0.95);
+    }
+
+    // PTA across the MIC ladder.
+    var pta = mics.map(function (mic) {
+      var ok = 0;
+      for (var s = 0; s < n; s++) {
+        var m = metrics(perSubj[s].cf, tA, tB, {
+          fu: model.fu, mic: mic * micEff, nGrid: cfg.nGrid || 300
+        });
+        if (meetsTarget(m, target, mic)) ok++;
+      }
+      return { mic: mic, pta: (100 * ok) / n };
+    });
+
+    // MIC-independent exposure summary (AUC, Cmin, Cmax) at the reference MIC.
+    var refMic = cfg.mic || 0, exposures = [];
+    for (j = 0; j < n; j++) {
+      exposures.push(metrics(perSubj[j].cf, tA, tB, {
+        fu: model.fu, mic: refMic * micEff, nGrid: cfg.nGrid || 300
+      }));
+    }
+    function summ(field) {
+      var v = exposures.map(function (e) { return e[field]; })
+                       .sort(function (a, b) { return a - b; });
+      return { median: percentile(v, 0.5), p5: percentile(v, 0.05), p95: percentile(v, 0.95) };
+    }
+    var ptaRef = 0;
+    for (j = 0; j < n; j++) if (meetsTarget(exposures[j], target, refMic)) ptaRef++;
+
+    // Typical-subject (population median parameter) profile.
+    var cfTyp = concFn(typ, model.ncmt, sched), typCurve = new Array(nT + 1);
+    for (i = 0; i <= nT; i++) typCurve[i] = cfTyp(times[i]);
+
+    return {
+      times: times, tA: tA, tB: tB, tau: tau, schedule: sched,
+      median: med, lo: lo, hi: hi, typical: typCurve,
+      typicalParams: typ,
+      pta: pta,
+      ptaAtRefMic: (100 * ptaRef) / n,
+      exposure: {
+        auc24: summ('auc24'), fauc24: summ('fauc24'),
+        cmin: summ('cmin'), cmax: summ('cmax'), tAbove: summ('tAbove')
+      },
+      n: n, micMultiplier: micEff
+    };
+  }
+
+  // Cumulative fraction of response against a MIC frequency distribution.
+  // dist: [{mic, freq}] — freq need not be normalised.
+  function cfr(ptaCurve, dist) {
+    var tot = 0, acc = 0;
+    dist.forEach(function (d) {
+      var hit = null;
+      for (var i = 0; i < ptaCurve.length; i++) {
+        if (Math.abs(ptaCurve[i].mic - d.mic) < 1e-9) { hit = ptaCurve[i]; break; }
+      }
+      if (hit) { acc += hit.pta * d.freq; tot += d.freq; }
+    });
+    return tot > 0 ? acc / tot : NaN;
+  }
+
+  // Highest MIC on the ladder at which PTA still meets the threshold
+  // (the PK/PD breakpoint for this regimen).
+  function pkpdBreakpoint(ptaCurve, thresh) {
+    var bp = null;
+    for (var i = 0; i < ptaCurve.length; i++) {
+      if (ptaCurve[i].pta >= thresh) bp = ptaCurve[i].mic; else break;
+    }
+    return bp;
+  }
+
+  /* ---------------------------------------------------------------
+     7. Nelder-Mead and MAP Bayesian individualisation.
+
+     Objective (to minimise) is the negative log posterior, dropping
+     constants:
+        sum_j [ (obs_j - pred_j)^2 / var_j + ln(var_j) ]
+      + sum_i eta_i^2 / omega_i^2
+     with var_j = (add)^2 + (prop * pred_j)^2.
+     This is the standard MAP/POSTHOC objective used for Bayesian
+     forecasting in TDM.
+     --------------------------------------------------------------- */
+  function nelderMead(f, x0, opts) {
+    opts = opts || {};
+    var n = x0.length,
+        maxIter = opts.maxIter || 600,
+        tol = opts.tol || 1e-8,
+        step = opts.step || 0.4,
+        simplex = [], i, j;
+
+    function evalPt(x) { return { x: x.slice(), fx: f(x) }; }
+    simplex.push(evalPt(x0));
+    for (i = 0; i < n; i++) {
+      var x = x0.slice();
+      x[i] += step;
+      simplex.push(evalPt(x));
+    }
+    function sortSimplex() {
+      simplex.sort(function (a, b) { return a.fx - b.fx; });
+    }
+    sortSimplex();
+
+    for (var it = 0; it < maxIter; it++) {
+      sortSimplex();
+      var best = simplex[0], worst = simplex[n];
+      if (Math.abs(worst.fx - best.fx) < tol) break;
+      var cen = new Array(n);
+      for (i = 0; i < n; i++) {
+        var s = 0;
+        for (j = 0; j < n; j++) s += simplex[j].x[i];
+        cen[i] = s / n;
+      }
+      function along(coef) {
+        var p = new Array(n);
+        for (var q = 0; q < n; q++) p[q] = cen[q] + coef * (cen[q] - worst.x[q]);
+        return evalPt(p);
+      }
+      var refl = along(1);
+      if (refl.fx < simplex[n - 1].fx && refl.fx >= best.fx) {
+        simplex[n] = refl; continue;
+      }
+      if (refl.fx < best.fx) {
+        var exp2 = along(2);
+        simplex[n] = exp2.fx < refl.fx ? exp2 : refl;
+        continue;
+      }
+      var con = along(-0.5);
+      if (con.fx < worst.fx) { simplex[n] = con; continue; }
+      for (i = 1; i <= n; i++) {
+        var y = new Array(n);
+        for (j = 0; j < n; j++) y[j] = best.x[j] + 0.5 * (simplex[i].x[j] - best.x[j]);
+        simplex[i] = evalPt(y);
+      }
+    }
+    sortSimplex();
+    return { x: simplex[0].x, fx: simplex[0].fx };
+  }
+
+  /* samples: [{time (h, on the same clock as the dosing record), conc (mg/L)}]
+     doseEvents: explicit event list (see buildSchedule) so a real, possibly
+     irregular, dosing record can be used.                                  */
+  function mapEstimate(model, cov, doseEvents, samples) {
+    var keys = iivKeys(model),
+        typ = model.params(cov),
+        omegas = keys.map(function (k) { return omegaOf(model, k); }),
+        // The prior penalty is eta' OMEGA^-1 eta. With a diagonal OMEGA
+        // that is the familiar sum of (eta/omega)^2; with an off-diagonal
+        // term present the full form is required, or a correlated pair is
+        // penalised as though it were two independent deviations.
+        cv = iivCov(model),
+        Lchol = cholesky(cv.S),
+        hasCorr = !!(model.iivCorr && model.iivCorr.length),
+        add = (model.err && model.err.add) || 0,
+        prop = (model.err && model.err.prop) || 0,
+        sched = { events: doseEvents };
+
+    function obj(etas) {
+      var p = withEtas(model, typ, etas);
+      if (!(p.CL > 0) || !(p.V1 > 0)) return 1e12;
+      if (model.ncmt === 2 && (!(p.Q > 0) || !(p.V2 > 0))) return 1e12;
+      var cf = concFn(p, model.ncmt, sched), ll = 0, i;
+      for (i = 0; i < samples.length; i++) {
+        var pred = cf(samples[i].time),
+            va = add * add + (prop * pred) * (prop * pred);
+        if (!(va > 0)) va = 1e-8;
+        var r = samples[i].conc - pred;
+        ll += (r * r) / va + Math.log(va);
+      }
+      if (hasCorr) {
+        ll += mahalanobis2(Lchol, etas);
+      } else {
+        for (i = 0; i < keys.length; i++) {
+          if (omegas[i] > 0) ll += (etas[i] * etas[i]) / (omegas[i] * omegas[i]);
+        }
+      }
+      return ll;
+    }
+
+    var start = keys.map(function () { return 0; }),
+        fit = nelderMead(obj, start, { step: 0.3, maxIter: 1200 });
+    // One restart from the solution guards against an early simplex collapse.
+    fit = nelderMead(obj, fit.x, { step: 0.08, maxIter: 800 });
+
+    var ind = withEtas(model, typ, fit.x),
+        cf = concFn(ind, model.ncmt, sched);
+    return {
+      etas: fit.x, objective: fit.fx,
+      params: ind, typicalParams: typ,
+      keys: keys,
+      predict: cf,
+      fitted: samples.map(function (s) {
+        return { time: s.time, obs: s.conc, pred: cf(s.time) };
+      })
+    };
+  }
+
+  /* ------------------------------------------------------------------
+     Convenience: deterministic profile for a given parameter set.
+     ------------------------------------------------------------------ */
+  function profile(model, params, regimen, nT, tSpan) {
+    var reg = {};
+    for (var k in regimen) if (Object.prototype.hasOwnProperty.call(regimen, k)) reg[k] = regimen[k];
+    if (reg.mode !== 'ci' && !reg.nDoses) {
+      reg.nDoses = Math.max(1, Math.ceil((tSpan || 48) / reg.tau));
+    }
+    var sched = buildSchedule(reg),
+        cf = concFn(params, model.ncmt, sched),
+        tEnd = tSpan || sched.tEnd,
+        n = nT || 400,
+        ts = [], cs = [];
+    for (var i = 0; i <= n; i++) {
+      var t = (i * tEnd) / n;
+      ts.push(t); cs.push(cf(t));
+    }
+    return { times: ts, conc: cs, schedule: sched, cf: cf };
+  }
+
+  var API = {
+    rng: rng, normals: normals,
+    cockcroftGault: cockcroftGault, ckdEpiCr: ckdEpiCr, ckdEpiCysC: ckdEpiCysC,
+    mdrd: mdrd, ibwDevine: ibwDevine, scrToMgdl: scrToMgdl,
+    iivCov: iivCov, cholesky: cholesky, mahalanobis2: mahalanobis2,
+    micro2: micro2, infusionResponse: infusionResponse,
+    buildSchedule: buildSchedule, concFn: concFn,
+    dosesToSteadyState: dosesToSteadyState,
+    metrics: metrics, samplePopulation: samplePopulation,
+    percentile: percentile, meetsTarget: meetsTarget,
+    simulate: simulate, cfr: cfr, pkpdBreakpoint: pkpdBreakpoint,
+    nelderMead: nelderMead, mapEstimate: mapEstimate, profile: profile,
+    omegaOf: omegaOf, iivKeys: iivKeys, withEtas: withEtas
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = API;
+  root.PKPD = API;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+</script>
+<script>
+/* =====================================================================
+   models.js — population PK model library.
+
+   EVERY parameter below was read off the parameter table of the primary
+   publication (see `source`), not from recall. A model is only included
+   if its fixed effects, covariate equations AND between-subject
+   variability terms were all recoverable from the paper, because a
+   model without variance terms cannot support Monte Carlo target
+   attainment or Bayesian forecasting.
+
+   Model spec fields
+     id, drug, label, source, doi
+     ncmt      1 or 2
+     matrix    what the model was fitted to ('total plasma' | 'unbound plasma')
+     fu        free fraction used to convert to free concentrations for
+               PD targets (1.0 when the model is already an unbound model)
+     covariates[]  UI descriptors
+     params(cov)   -> {CL, V1, Q, V2}   (L/h, L)
+     iiv{}     between-subject variability, keyed by parameter name
+     iivScale  'omega' (reported % is the log-scale SD — the usual
+               NONMEM exponential-model convention) or 'cv'
+     err{add,prop}  residual error; needed only for Bayesian forecasting
+     bayesian  false disables MAP forecasting (with a stated reason)
+     targets[] PD targets appropriate to the drug
+   ===================================================================== */
+(function (root) {
+  'use strict';
+
+  var LADDER = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128];
+
+  /* ---------------- Targets ---------------- */
+  var T_FT50  = { id: 'ft50',  type: 'ftmic', threshold: 50,  label: '50% fT>MIC' };
+  var T_FT100 = { id: 'ft100', type: 'ftmic', threshold: 100, label: '100% fT>MIC' };
+  var T_FT100x4 = {
+    id: 'ft100x4', type: 'ftmic', threshold: 100, micMultiplier: 4,
+    label: '100% fT>4\u00d7MIC'
+  };
+  var T_FT60 = { id: 'ft60', type: 'ftmic', threshold: 60, label: '60% fT>MIC' };
+  var T_FT40 = { id: 'ft40', type: 'ftmic', threshold: 40, label: '40% fT>MIC' };
+  // Carbapenem targets in common use for teaching: 40% fT>MIC is the
+  // classical bactericidal exposure for carbapenems, while 100% fT>MIC
+  // and 100% fT>4xMIC are the critical-care targets used by the source
+  // papers implemented below.
+  var MERO_TARGETS = [T_FT40, T_FT50, T_FT100, T_FT100x4];
+
+  var MODELS = [
+
+    /* =================================================================
+       VANCOMYCIN — Thomson et al. 2009
+       Two-compartment, fitted to routine TDM data from 398 adults.
+       Table 2: CL 2.99 L/h (typical, at CLcr 66 mL/min); CLcr coefficient
+       0.0154 = proportional change per mL/min (the paper states this as
+       "15.4% for every 10 mL/min difference from a CLcr of 66 mL/min");
+       V1 0.675 L/kg; V2 0.732 L/kg; Q 2.28; IIV 27 / 15 / 130 / 49 %
+       on CL / V1 / V2 / Q; residual error additive 1.6 mg/L plus
+       proportional 15%. Vss (V1+V2) = 1.41 L/kg matches the paper's
+       stated Vss of 1.4 L/kg.
+       ================================================================= */
+    {
+      id: 'van_thomson2009',
+      drug: 'Vancomycin',
+      label: 'Thomson 2009 — 2-cmt, adult TDM population',
+      source: 'Thomson AH, Staatz CE, Tobin CM, Gall M, Lovering AM. ' +
+              'J Antimicrob Chemother 2009;63:1050-7, Table 2.',
+      doi: '10.1093/jac/dkp085',
+      ncmt: 2,
+      matrix: 'total plasma',
+      fu: 1.0,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr'],
+      params: function (c) {
+        var crcl = Math.max(5, c.crcl);
+        // Proportional CLcr model centred on 66 mL/min; floored to keep
+        // CL strictly positive at the extreme low end of the range.
+        var cl = 2.99 * (1 + 0.0154 * (crcl - 66));
+        return {
+          CL: Math.max(0.05, cl),
+          V1: 0.675 * c.wt,
+          Q: 2.28,
+          V2: 0.732 * c.wt
+        };
+      },
+      iiv: { CL: 0.27, V1: 0.15, V2: 1.30, Q: 0.49 },
+      iivScale: 'omega',
+      err: { add: 1.6, prop: 0.15 },
+      bayesian: true,
+      note: 'Q is tabulated as 2.28 with a unit label of h\u207b\u00b9 while the ' +
+            'table key defines Q as intercompartmental clearance; it is ' +
+            'implemented here as 2.28 L/h. Distribution is therefore slow ' +
+            'and the peripheral compartment poorly identified (V2 IIV 130%), ' +
+            'which is expected for a model built on trough-rich TDM data.',
+      targets: [
+        { id: 'auc400', type: 'auc', lo: 400, hi: 600,
+          label: 'AUC\u2080\u208b\u2082\u2084 400\u2013600 mg\u00b7h/L', micFree: false },
+        { id: 'aucmic400', type: 'aucmic', threshold: 400,
+          label: 'AUC\u2080\u208b\u2082\u2084/MIC \u2265 400' },
+        { id: 'cmin1020', type: 'cmin', lo: 10, hi: 20,
+          label: 'C\u2098\u1d62\u2099 10\u201320 mg/L' }
+      ],
+      defaultRegimen: { dose: 1000, tau: 12, tinf: 1.0 },
+      defaultMic: 1
+    },
+
+    /* =================================================================
+       PIPERACILLIN — Kim et al. 2022
+       Two-compartment, 38 critically ill adults (19 on ECMO).
+       Table 2: CL = 5.05 * exp(0.00932 * (eGFR_cysC - 52.77)) L/h;
+       Vc 16.5 L (non-ECMO) or 7.38 L (ECMO); Q 6.28 L/h; Vp 6.27 L;
+       IIV 33.7% CL, 65.3% Vc non-ECMO, 45.9% Vc ECMO; proportional
+       residual error 26.9%. Allometric scaling to 70 kg with exponents
+       0.75 (clearances) and 1 (volumes) per the paper's equation 1.
+       Free fraction fixed at 0.91 in the paper's own PTA simulations.
+       This model was identified as the most accurate and precise of 24
+       published piperacillin models for the pooled dataset in the
+       multicentre external evaluation (Intensive Care Med 2023).
+       ================================================================= */
+    {
+      id: 'pip_kim2022',
+      drug: 'Piperacillin',
+      label: 'Kim 2022 — 2-cmt, critically ill \u00b1 ECMO',
+      source: 'Kim YK, Kim HS, Park S, et al. J Antimicrob Chemother ' +
+              '2022;77:1353-64, Table 2.',
+      doi: '10.1093/jac/dkac059',
+      ncmt: 2,
+      matrix: 'total plasma',
+      fu: 0.91,
+      renal: 'cysc',
+      covariates: ['wt', 'age', 'sex', 'cysc', 'ecmo'],
+      params: function (c) {
+        var wf = c.wt / 70,
+            cl75 = Math.pow(wf, 0.75),
+            v1 = wf,
+            egfr = Math.max(1, c.egfr);
+        return {
+          CL: 5.05 * Math.exp(0.00932 * (egfr - 52.77)) * cl75,
+          V1: (c.ecmo ? 7.38 : 16.5) * v1,
+          Q: 6.28 * cl75,
+          V2: 6.27 * v1
+        };
+      },
+      iivFor: function (c) {
+        return { CL: 0.337, V1: c.ecmo ? 0.459 : 0.653 };
+      },
+      iiv: { CL: 0.337, V1: 0.653 },
+      iivScale: 'omega',
+      err: { add: 0, prop: 0.269 },
+      bayesian: true,
+      note: 'Clearance covariate is eGFR from the CKD-EPI CYSTATIN C ' +
+            'equation, not a creatinine-based estimate — entering a ' +
+            'creatinine eGFR here is a model misuse.',
+      targets: [T_FT50, T_FT100, T_FT100x4],
+      defaultRegimen: { dose: 4000, tau: 6, tinf: 0.5 },
+      defaultMic: 16
+    },
+
+    /* =================================================================
+       PIPERACILLIN — Udy et al. 2015
+       Two-compartment, 48 critically ill adults with sepsis, fitted to
+       UNBOUND plasma piperacillin (so fu = 1 here).
+       Table 2: CL 16.3 L/h scaled as CL * (CLcr/100); Vc 19.9 L;
+       Vp 18.8 L; Q 37.3 L/h; BSV 56.0% CL, 29.6% Vc, 67.6% Vp.
+       Best-performing model for intermittent infusion in the 2023
+       multicentre external evaluation.
+       ================================================================= */
+    {
+      id: 'pip_udy2015',
+      drug: 'Piperacillin',
+      label: 'Udy 2015 — 2-cmt, unbound, sepsis / augmented CLcr',
+      source: 'Udy AA, Lipman J, Jarrett P, et al. Crit Care 2015;19:28, ' +
+              'Table 2.',
+      doi: '10.1186/s13054-015-0750-y',
+      ncmt: 2,
+      matrix: 'unbound plasma',
+      fu: 1.0,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr'],
+      params: function (c) {
+        return {
+          CL: 16.3 * (Math.max(5, c.crcl) / 100),
+          V1: 19.9,
+          Q: 37.3,
+          V2: 18.8
+        };
+      },
+      iiv: { CL: 0.56, V1: 0.296, V2: 0.676 },
+      iivScale: 'omega',
+      err: { add: 0.3, prop: null },
+      bayesian: false,
+      bayesianNote: 'MAP forecasting is disabled for this model. Its ' +
+            'residual-error table reports "RUV (%CV) 1.0" alongside ' +
+            '"RUV (SD) 0.3 mg/L"; the scale of the proportional term is ' +
+            'ambiguous in the published table, and a wrong residual ' +
+            'variance would silently distort the weighting of TDM samples ' +
+            'against the prior. Monte Carlo target attainment is ' +
+            'unaffected — it needs only the fixed effects and BSV, which ' +
+            'is exactly how the paper itself used this model.',
+      note: 'Fitted to unbound concentrations: simulated concentrations ' +
+            'are already free drug, so no protein-binding correction is ' +
+            'applied. An infusion lag (ALAG) term in the published model ' +
+            'is not implemented.',
+      targets: [T_FT50, T_FT100],
+      defaultRegimen: { dose: 4000, tau: 6, tinf: 0.33 },
+      defaultMic: 16
+    },
+
+    /* =================================================================
+       MEROPENEM — Gijsen et al. 2021
+       Two-compartment, 25 critically ill adults (ECMO and matched
+       non-ECMO), fitted to UNBOUND meropenem plasma concentrations.
+       Table 2 (final model): CL 14.7 L/h, Vc 25.6 L, Q 5.51 L/h,
+       Vp 8.02 L; allometric exponents FIXED at 0.75 on CL and Q and 1 on
+       Vc and Vp; eGFR(CKD-EPI) exponent on CL 1.29. The paper states the
+       clearance model explicitly as equation (1):
+         CL_i = 14.7 x (BW_i/70)^0.75 x (eGFR_CKD-EPI,i/105)^1.29
+       IIV 46.8% CV on CL and 61.6% CV on Vc, with a CL-Vc correlation of
+       70.4%; proportional residual error 28.8% CV.
+       ECMO was tested and NOT retained as a significant predictor — the
+       paper's central finding — so there is no ECMO term to implement.
+       ================================================================= */
+    {
+      id: 'mem_gijsen2021',
+      drug: 'Meropenem',
+      label: 'Gijsen 2021 — 2-cmt, unbound, ICU \u00b1 ECMO',
+      source: 'Gijsen M, Dreesen E, Annaert P, et al. Microorganisms ' +
+              '2021;9(6):1310, Table 2 and equation (1).',
+      doi: '10.3390/microorganisms9061310',
+      ncmt: 2,
+      matrix: 'unbound plasma',
+      fu: 1.0,
+      renal: 'ckdepi',
+      covariates: ['wt', 'age', 'sex', 'scr'],
+      params: function (c) {
+        var bw = Math.max(25, c.wt) / 70,
+            eg = Math.max(5, c.egfr) / 105;
+        return {
+          CL: 14.7 * Math.pow(bw, 0.75) * Math.pow(eg, 1.29),
+          V1: 25.6 * bw,
+          Q: 5.51 * Math.pow(bw, 0.75),
+          V2: 8.02 * bw
+        };
+      },
+      iiv: { CL: 0.468, V1: 0.616 },
+      // Reported as a true coefficient of variation (%CV column).
+      iivScale: 'cv',
+      iivCorr: [['CL', 'V1', 0.704]],
+      err: { add: 0, prop: 0.288 },
+      bayesian: true,
+      note: 'Fitted to UNBOUND meropenem, so simulated concentrations are ' +
+            'already free drug and no protein-binding correction is applied. ' +
+            'ECMO is deliberately absent as a covariate: the paper tested it ' +
+            'and found it non-significant. The CL-Vc IIV correlation of ' +
+            '70.4% is implemented, so the two random effects are sampled ' +
+            'jointly rather than independently.',
+      targets: MERO_TARGETS,
+      defaultRegimen: { dose: 1000, tau: 8, tinf: 0.5 },
+      defaultMic: 2
+    },
+
+    /* =================================================================
+       MEROPENEM — Shekar et al. 2014
+       Two-compartment, 21 critically ill adults (11 on ECMO, 10 matched
+       controls; 5 of the ECMO patients and 5 of the controls on RRT).
+       Table 2: CL 5.1 L/h, Vc 18.7 L, Vp 13.2 L, Q 21.0 L/h,
+       CL_CRCL 1.89; BSV 51.6% CL, 45.8% Vc, 28.7% Vp; RUV 13.7% CV plus
+       2.3 mg/L additive. The covariate model is
+         TVCL = theta1(CL_RRT) + theta1(CL_NORRT x CrCL)
+       with CL_RRT = 0 for patients not on RRT and CL_NORRT = 0 for
+       patients on RRT, i.e. clearance is a fixed 5.1 L/h on RRT and
+       1.89 x CrCL otherwise. ECMO was tested on every parameter and was
+       neither significant nor an improvement in fit, so — as in the
+       source — there is no ECMO term.
+       ================================================================= */
+    {
+      id: 'mem_shekar2014',
+      drug: 'Meropenem',
+      label: 'Shekar 2014 — 2-cmt, RRT (continuous) / ECMO cohort',
+      source: 'Shekar K, Fraser JF, Taccone FS, et al. Crit Care ' +
+              '2014;18:565, Table 2.',
+      doi: '10.1186/s13054-014-0565-2',
+      ncmt: 2,
+      matrix: 'total plasma',
+      fu: 0.98,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr', 'rrt'],
+      params: function (c) {
+        // CrCL enters in L/h (the CG estimate is in mL/min).
+        var crclLh = Math.max(2, c.crcl) * 0.06;
+        return {
+          CL: c.rrt ? 5.1 : 1.89 * crclLh,
+          V1: 18.7,
+          Q: 21.0,
+          V2: 13.2
+        };
+      },
+      iiv: { CL: 0.516, V1: 0.458, V2: 0.287 },
+      iivScale: 'cv',
+      err: { add: 2.3, prop: 0.137 },
+      bayesian: true,
+      note: 'On RRT, clearance is a fixed 5.1 L/h and creatinine clearance ' +
+            'has no effect — the published model deliberately decouples the ' +
+            'two. Off RRT, CL = 1.89 x CLcr expressed in L/h. Volumes and ' +
+            'intercompartmental clearance carry no weight scaling in the ' +
+            'published model, so changing body weight moves only CLcr. ' +
+            'RRT in this cohort was continuous (CVVHDF); an intermittent ' +
+            'schedule is not represented. n = 21, so parameters are ' +
+            'imprecise (Q 95% CI 12.8\u201337.0 L/h). ' +
+            'CAVEAT \u2014 the source is internally inconsistent: the trough ' +
+            'concentrations tabulated in its Table 3, and the CLcr-banded ' +
+            'dosing advice drawn from them, imply clearances of only ' +
+            '2.4\u20135.5 L/h across CLcr 20\u2013180, which contradicts the ' +
+            'same paper\u2019s measured clearances of 7.9 \u00b1 5.9 (ECMO) and ' +
+            '11.7 \u00b1 6.5 L/h (controls) and cannot be produced by its own ' +
+            'Table 2 equation under any unit reading. Its 1 g column is ' +
+            'also not dose-proportional to its 500 mg and 2 g columns. ' +
+            'What is implemented here is the published EQUATION, which ' +
+            'reproduces the measured clearances closely (CL = 11.3 L/h at ' +
+            'CLcr 100). Consequently this model does NOT reproduce that ' +
+            'paper\u2019s dosing table \u2014 it predicts markedly lower ' +
+            'attainment at high CLcr. See validate.cjs for the inversion.',
+      targets: MERO_TARGETS,
+      defaultRegimen: { dose: 1000, tau: 8, tinf: 0.5 },
+      defaultMic: 2
+    },
+
+    /* =================================================================
+       MEROPENEM — O'Jeanson et al. 2021
+       ONE-compartment, critically ill adults spanning no RRT, continuous
+       dialysis and semi-continuous (intermittent) dialysis.
+       Table 4 (final model): theta_CL 1.36, theta_GFR 0.058,
+       theta_DIA_C 6.38, theta_RFS 13.9, theta_RD 0.60, theta_DIA_SC 11.0,
+       theta_V 43.9 L; BSV 30.8% CV on CL and 87.6% CV on V; proportional
+       residual error 32.1% CV. The paper defines CV(%) = sqrt(exp(w^2)-1)
+       x 100, so the reported percentages are TRUE coefficients of
+       variation and are converted accordingly.
+
+       Clearance follows the paper's own decision tree (Fig. 1):
+         semi-continuous dialysis : CL = theta_DIA_SC
+         continuous dialysis      : CL = theta_DIA_C + theta_RD(RD/845 - 1)
+         GFR >= 120 (RFS = 1)     : CL = theta_RFS  + theta_RD(RD/845 - 1)
+         otherwise                : CL = theta_CL + theta_GFR x GFR_MDRD
+                                         + theta_RD(RD/845 - 1)
+       Check: at the population median GFR_MDRD of 49 mL/min and median
+       residual diuresis, CL = 1.36 + 0.058 x 49 = 4.20 L/h, reproducing
+       the typical-patient clearance the paper reports in Table 3.
+       ================================================================= */
+    {
+      id: 'mem_ojeanson2021',
+      drug: 'Meropenem',
+      label: "O'Jeanson 2021 — 1-cmt, ICU incl. intermittent & continuous RRT",
+      source: "O'Jeanson A, Larcher R, Le Souder C, Djebli N, Khier S. " +
+              'Eur J Drug Metab Pharmacokinet 2021;46(5):695-705, ' +
+              'Table 4 and Fig. 1.',
+      doi: '10.1007/s13318-021-00709-w',
+      ncmt: 1,
+      matrix: 'total plasma',
+      fu: 0.98,
+      renal: 'mdrd',
+      covariates: ['age', 'sex', 'scr', 'dialysis', 'rd'],
+      params: function (c) {
+        var rdTerm = 0.60 * ((Math.max(0, c.rd == null ? 845 : c.rd) / 845) - 1),
+            cl;
+        if (c.dialysis === 'semicont') {
+          cl = 11.0;                       // independent of GFR and diuresis
+        } else if (c.dialysis === 'cont') {
+          cl = 6.38 + rdTerm;
+        } else if (Math.max(0, c.egfr) >= 120) {
+          cl = 13.9 + rdTerm;              // renal function status = 1
+        } else {
+          cl = 1.36 + 0.058 * Math.max(0, c.egfr) + rdTerm;
+        }
+        return { CL: Math.max(0.2, cl), V1: 43.9 };
+      },
+      iiv: { CL: 0.308, V1: 0.876 },
+      iivScale: 'cv',
+      err: { add: 0, prop: 0.321 },
+      bayesian: true,
+      note: 'One-compartment model: no distribution phase, so early ' +
+            'post-infusion concentrations are smoothed relative to a ' +
+            '2-compartment description. Clearance is a step function of ' +
+            'renal-replacement modality — semi-continuous (intermittent) ' +
+            'dialysis gives a clearance independent of GFR and of residual ' +
+            'diuresis. The renal covariate is GFR from the 4-variable MDRD ' +
+            'equation specifically; the paper reports it in mL/min and ' +
+            'notes normo-renal patients were under-represented (median GFR ' +
+            '49 mL/min), so high-clearance predictions are the least well ' +
+            'supported part of this model.',
+      targets: MERO_TARGETS,
+      defaultRegimen: { dose: 1000, tau: 8, tinf: 0.5 },
+      defaultMic: 2
+    }
+  ];
+
+  /* Models documented but NOT implemented, with the reason. Shown in the
+     app so the omission is visible rather than silent. */
+  var PENDING = [
+    { drug: 'Cefepime',
+      label: 'Nicasio 2009 — 2-cmt, VAP, nonparametric',
+      doi: '10.1128/AAC.01141-08',
+      reason: 'Structural model recovered (K10 = 0.0027\u00b7CLcr + 0.071 h\u207b\u00b9, ' +
+              'V1 = 0.21 L/kg\u00b7TBW, K12 0.780, K21 0.472 h\u207b\u00b9) but the ' +
+              'nonparametric support points / parameter dispersion needed ' +
+              'for Monte Carlo simulation were not in the retrievable record.' },
+    { drug: 'Meropenem',
+      label: 'Li 2006 — 2-cmt, hospitalised adults',
+      doi: '10.1177/0091270006291035',
+      reason: 'Requested but not implemented: the article is closed access ' +
+              'and no repository copy was retrievable, so the parameter ' +
+              'table could not be read. The abstract establishes a 2-cmt ' +
+              'model in 79 patients with creatinine clearance, age and ' +
+              'weight as covariates, but abstract-level detail cannot ' +
+              'support simulation. Supply the PDF and it can be added.' },
+    { drug: 'Meropenem',
+      label: 'Ehmann 2019 — 2-cmt, critically ill, dosing algorithm',
+      doi: '10.1016/j.ijantimicag.2019.06.016',
+      reason: 'Requested but not implemented: closed access, no repository ' +
+              'copy retrievable. The abstract gives the covariate ' +
+              'structure (Cockcroft-Gault CLcr on clearance; body weight ' +
+              'on central and albumin on peripheral volume) but no ' +
+              'estimates. The companion open-access paper from the same ' +
+              'cohort (doi 10.1186/s13054-017-1829-4) is a target ' +
+              'non-attainment risk analysis and contains no popPK ' +
+              'parameter table. Supply the PDF and it can be added.' },
+    { drug: 'Piperacillin',
+      label: 'Klastrup 2020 — continuous infusion',
+      doi: '10.1128/AAC.02556-19',
+      reason: 'Best-performing model for continuous infusion in the 2023 ' +
+              'external evaluation, but only the abstract was retrievable; ' +
+              'parameter table not obtained.' }
+  ];
+
+  var PRESETS = [
+    { id: 'pip-ei', label: 'Piperacillin: standard vs extended infusion',
+      model: 'pip_kim2022', target: 'ft100',
+      regimens: [
+        { label: '4 g q6h, 0.5 h', dose: 4000, tau: 6, tinf: 0.5 },
+        { label: '4 g q6h, 4 h', dose: 4000, tau: 6, tinf: 4 },
+        { label: '16 g/24 h CI', mode: 'ci', dose24: 16000 }
+      ],
+      cov: { wt: 80, age: 60, sex: 'M', cysc: 1.0, ecmo: false }, mic: 16 },
+    { id: 'pip-arc', label: 'Piperacillin: augmented renal clearance',
+      model: 'pip_udy2015', target: 'ft100',
+      regimens: [
+        { label: '4 g q6h, 0.33 h', dose: 4000, tau: 6, tinf: 0.33 },
+        { label: '4 g q8h, 4 h', dose: 4000, tau: 8, tinf: 4 },
+        { label: '4 g q6h, 4 h', dose: 4000, tau: 6, tinf: 4 }
+      ],
+      cov: { wt: 88, age: 47, sex: 'M', scr: 79.5, scrUnit: 'umol/L' }, mic: 16 },
+    { id: 'mem-rrt', label: 'Meropenem: dialysis modality',
+      model: 'mem_ojeanson2021', target: 'ft100',
+      regimens: [
+        { label: '1 g q8h, 0.5 h', dose: 1000, tau: 8, tinf: 0.5 },
+        { label: '1 g q8h, 3 h', dose: 1000, tau: 8, tinf: 3 },
+        { label: '3 g/24 h CI', mode: 'ci', dose24: 3000 }
+      ],
+      cov: { age: 62, sex: 'M', scr: 2.4, scrUnit: 'mg/dL',
+             dialysis: 'semicont', rd: 200 }, mic: 2 },
+    { id: 'mem-arc', label: 'Meropenem: augmented renal clearance',
+      model: 'mem_gijsen2021', target: 'ft100',
+      regimens: [
+        { label: '1 g q8h, 0.5 h', dose: 1000, tau: 8, tinf: 0.5 },
+        { label: '2 g q8h, 3 h', dose: 2000, tau: 8, tinf: 3 },
+        { label: '6 g/24 h CI', mode: 'ci', dose24: 6000 }
+      ],
+      cov: { wt: 75, age: 42, sex: 'M', scr: 0.6, scrUnit: 'mg/dL' }, mic: 2 },
+    { id: 'van-auc', label: 'Vancomycin: AUC 400\u2013600 attainment',
+      model: 'van_thomson2009', target: 'auc400',
+      regimens: [
+        { label: '1 g q12h', dose: 1000, tau: 12, tinf: 1 },
+        { label: '1.5 g q12h', dose: 1500, tau: 12, tinf: 1.5 },
+        { label: '2 g/24 h CI', mode: 'ci', dose24: 2000 }
+      ],
+      cov: { wt: 72, age: 66, sex: 'M', scr: 98, scrUnit: 'umol/L' }, mic: 1 }
+  ];
+
+  var API = { MODELS: MODELS, PENDING: PENDING, PRESETS: PRESETS, LADDER: LADDER,
+              TARGETS: { T_FT50: T_FT50, T_FT100: T_FT100,
+                         T_FT100x4: T_FT100x4, T_FT60: T_FT60 } };
+  if (typeof module !== 'undefined' && module.exports) module.exports = API;
+  root.PKPD_MODELS = API;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+</script>
+<script>
+/* =====================================================================
+   app.js — UI, canvas plotting and URL-parameter wiring for MIPD Lab.
+   Depends on PKPD (pkpd-core.js) and PKPD_MODELS (models.js).
+   No external libraries, no network calls: the built HTML file is fully
+   self-contained so it works offline inside a slide deck.
+   ===================================================================== */
+(function () {
+  'use strict';
+  var P = window.PKPD, M = window.PKPD_MODELS;
+  var $ = function (id) { return document.getElementById(id); };
+
+  var COLORS = ['#0072B2', '#E69F00', '#009E73'];
+  var MICCOL = '#D55E00', BAYESCOL = '#CC79A7';
+
+  /* ---------------- URL parameters ---------------- */
+  var Q = (function () {
+    var o = {}, s = window.location.search.replace(/^\?/, '');
+    if (!s) return o;
+    s.split('&').forEach(function (kv) {
+      if (!kv) return;
+      var i = kv.indexOf('='), k = i < 0 ? kv : kv.slice(0, i),
+          v = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1).replace(/\+/g, ' '));
+      o[k] = v;
+    });
+    return o;
+  })();
+  var WIDGET = Q.mode === 'widget';
+  var num = function (v, d) { var x = parseFloat(v); return isFinite(x) ? x : d; };
+  var bool = function (v, d) {
+    if (v == null) return d;
+    return v === '1' || v === 'true' || v === 'yes';
+  };
+
+  /* ---------------- state ---------------- */
+  var S = {
+    modelId: Q.model || 'pip_kim2022',
+    regimens: [],
+    targetId: Q.target || null,
+    mic: null,
+    ptaThresh: num(Q.pta, 90),
+    n: num(Q.n, WIDGET ? 600 : 1000),
+    seed: num(Q.seed, 20250101),
+    logy: bool(Q.logy, false),
+    cov: {}
+  };
+
+  function model() {
+    var m = null;
+    M.MODELS.forEach(function (x) { if (x.id === S.modelId) m = x; });
+    return m || M.MODELS[0];
+  }
+  function target() {
+    var m = model(), t = null;
+    m.targets.forEach(function (x) { if (x.id === S.targetId) t = x; });
+    return t || m.targets[0];
+  }
+
+  /* ---------------- canvas plotting ----------------
+     A small axes/line/band renderer. Deliberately hand-rolled: a CDN
+     charting library would break an offline slide deck.              */
+  function Plot(canvas, opts) {
+    opts = opts || {};
+    var dpr = window.devicePixelRatio || 1,
+        cssW = canvas.clientWidth || 520,
+        cssH = opts.height || (WIDGET ? 330 : 270);
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    var g = canvas.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, cssW, cssH);
+    var fs = WIDGET ? 13 : 11;
+    this.g = g; this.W = cssW; this.H = cssH; this.fs = fs;
+    this.pad = { l: WIDGET ? 56 : 50, r: 12, t: 10, b: WIDGET ? 44 : 38 };
+    this.xlog = !!opts.xlog; this.ylog = !!opts.ylog;
+  }
+  Plot.prototype.setScale = function (x0, x1, y0, y1) {
+    this.x0 = x0; this.x1 = x1; this.y0 = y0; this.y1 = y1;
+  };
+  Plot.prototype.px = function (x) {
+    var a = this.xlog ? Math.log10(Math.max(1e-9, x)) : x,
+        b = this.xlog ? Math.log10(Math.max(1e-9, this.x0)) : this.x0,
+        c = this.xlog ? Math.log10(Math.max(1e-9, this.x1)) : this.x1;
+    return this.pad.l + ((a - b) / (c - b)) * (this.W - this.pad.l - this.pad.r);
+  };
+  Plot.prototype.py = function (y) {
+    var a = this.ylog ? Math.log10(Math.max(1e-9, y)) : y,
+        b = this.ylog ? Math.log10(Math.max(1e-9, this.y0)) : this.y0,
+        c = this.ylog ? Math.log10(Math.max(1e-9, this.y1)) : this.y1;
+    return this.H - this.pad.b - ((a - b) / (c - b)) * (this.H - this.pad.t - this.pad.b);
+  };
+  Plot.prototype.axes = function (xlab, ylab, xticks, yticks) {
+    var g = this.g, i;
+    // Tick arrays may be plain numbers or {v,l} objects; normalise once so
+    // every consumer below (gridlines included) sees a numeric value. A
+    // raw object reaching py() yields log10(object) = NaN on a log axis,
+    // which silently drops the gridline.
+    function norm(ts) {
+      return ts.map(function (t) {
+        return (t != null && typeof t === 'object')
+          ? { v: t.v, l: t.l != null ? t.l : String(t.v) }
+          : { v: t, l: String(t) };
+      });
+    }
+    xticks = norm(xticks); yticks = norm(yticks);
+    g.font = this.fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+    g.lineWidth = 1;
+    // gridlines
+    g.strokeStyle = '#eef1f4';
+    yticks.forEach(function (t) {
+      g.beginPath(); g.moveTo(this.pad.l, this.py(t.v));
+      g.lineTo(this.W - this.pad.r, this.py(t.v)); g.stroke();
+    }, this);
+    // frame
+    g.strokeStyle = '#c8cfd6';
+    g.beginPath();
+    g.moveTo(this.pad.l, this.pad.t); g.lineTo(this.pad.l, this.H - this.pad.b);
+    g.lineTo(this.W - this.pad.r, this.H - this.pad.b); g.stroke();
+    // ticks + labels
+    g.fillStyle = '#4a5158'; g.textAlign = 'center'; g.textBaseline = 'top';
+    xticks.forEach(function (t) {
+      var x = this.px(t.v);
+      g.beginPath(); g.moveTo(x, this.H - this.pad.b);
+      g.lineTo(x, this.H - this.pad.b + 4); g.stroke();
+      g.fillText(t.l, x, this.H - this.pad.b + 6);
+    }, this);
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    yticks.forEach(function (t) {
+      var y = this.py(t.v);
+      g.beginPath(); g.moveTo(this.pad.l - 4, y); g.lineTo(this.pad.l, y); g.stroke();
+      g.fillText(t.l, this.pad.l - 7, y);
+    }, this);
+    // axis titles
+    g.fillStyle = '#15181c';
+    g.font = '600 ' + this.fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'bottom';
+    g.fillText(xlab, this.pad.l + (this.W - this.pad.l - this.pad.r) / 2, this.H - 3);
+    g.save();
+    g.translate(11, this.pad.t + (this.H - this.pad.t - this.pad.b) / 2);
+    g.rotate(-Math.PI / 2); g.textBaseline = 'top';
+    g.fillText(ylab, 0, 0);
+    g.restore();
+  };
+  Plot.prototype.band = function (xs, los, his, color) {
+    var g = this.g, i;
+    g.beginPath();
+    g.moveTo(this.px(xs[0]), this.py(los[0]));
+    for (i = 1; i < xs.length; i++) g.lineTo(this.px(xs[i]), this.py(los[i]));
+    for (i = xs.length - 1; i >= 0; i--) g.lineTo(this.px(xs[i]), this.py(his[i]));
+    g.closePath(); g.fillStyle = color; g.fill();
+  };
+  Plot.prototype.line = function (xs, ys, color, w, dash) {
+    var g = this.g;
+    g.save();
+    g.beginPath(); g.lineWidth = w || 2; g.strokeStyle = color;
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    if (dash) g.setLineDash(dash);
+    for (var i = 0; i < xs.length; i++) {
+      var X = this.px(xs[i]), Y = this.py(ys[i]);
+      if (i === 0) g.moveTo(X, Y); else g.lineTo(X, Y);
+    }
+    g.stroke(); g.restore();
+  };
+  Plot.prototype.hline = function (y, color, w, dash) {
+    this.line([this.x0, this.x1], [y, y], color, w || 1.5, dash || [5, 4]);
+  };
+  Plot.prototype.points = function (xs, ys, color, r) {
+    var g = this.g;
+    for (var i = 0; i < xs.length; i++) {
+      g.beginPath();
+      g.arc(this.px(xs[i]), this.py(ys[i]), r || 4, 0, 2 * Math.PI);
+      g.fillStyle = color; g.fill();
+      g.lineWidth = 1.5; g.strokeStyle = '#fff'; g.stroke();
+    }
+  };
+  Plot.prototype.text = function (s, x, y, color, align, bold) {
+    var g = this.g;
+    g.font = (bold ? '600 ' : '') + this.fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+    g.fillStyle = color || '#15181c';
+    g.textAlign = align || 'left'; g.textBaseline = 'middle';
+    g.fillText(s, x, y);
+  };
+
+  function niceTicks(lo, hi, want) {
+    var span = hi - lo;
+    if (!(span > 0)) return [lo];
+    var raw = span / (want || 5),
+        mag = Math.pow(10, Math.floor(Math.log10(raw))),
+        norm = raw / mag,
+        step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag,
+        start = Math.ceil(lo / step) * step, out = [];
+    for (var v = start; v <= hi + step * 1e-9; v += step) {
+      out.push(Math.abs(v) < 1e-12 ? 0 : parseFloat(v.toPrecision(12)));
+    }
+    return out;
+  }
+
+  /* ---------------- covariate handling ---------------- */
+  /* Each model declares which renal-function equation its clearance
+     covariate was estimated against. Substituting a different equation
+     is a silent misuse, so the mapping is explicit per model and the
+     computed value is labelled with the equation used in the readout. */
+  var RENAL_LABEL = {
+    cg: 'CLcr (Cockcroft-Gault)',
+    cysc: 'eGFR (CKD-EPI cystatin C)',
+    ckdepi: 'eGFR (CKD-EPI creatinine)',
+    mdrd: 'GFR (MDRD, 4-variable)'
+  };
+  function renalOf(m) {
+    var c = S.cov;
+    if (m.renal === 'cysc') {
+      return { egfr: P.ckdEpiCysC({ cysc: c.cysc, age: c.age, sex: c.sex }),
+               kind: 'cysc' };
+    }
+    if (m.renal === 'ckdepi') {
+      return { egfr: P.ckdEpiCr({ scr: c.scr, scrUnit: c.scrUnit,
+                                  age: c.age, sex: c.sex }), kind: 'ckdepi' };
+    }
+    if (m.renal === 'mdrd') {
+      return { egfr: P.mdrd({ scr: c.scr, scrUnit: c.scrUnit,
+                              age: c.age, sex: c.sex }), kind: 'mdrd' };
+    }
+    return { crcl: P.cockcroftGault({ wt: c.wt, age: c.age, sex: c.sex,
+                                      scr: c.scr, scrUnit: c.scrUnit }),
+             kind: 'cg' };
+  }
+  function covFull() {
+    var m = model(), c = {}, k;
+    for (k in S.cov) if (Object.prototype.hasOwnProperty.call(S.cov, k)) c[k] = S.cov[k];
+    var r = renalOf(m);
+    if (r.crcl != null) c.crcl = r.crcl;
+    if (r.egfr != null) c.egfr = r.egfr;
+    return c;
+  }
+
+  /* Some models carry covariate-dependent IIV (Kim: Vc IIV differs on
+     ECMO). Build a per-render shallow clone with the right omegas. */
+  function modelResolved() {
+    var m = model();
+    if (typeof m.iivFor !== 'function') return m;
+    var clone = {}, k;
+    for (k in m) if (Object.prototype.hasOwnProperty.call(m, k)) clone[k] = m[k];
+    clone.iiv = m.iivFor(S.cov);
+    return clone;
+  }
+
+  /* ---------------- regimen UI ---------------- */
+  function defaultRegimens() {
+    var m = model(), d = m.defaultRegimen;
+    if (Q.dose || Q.ci) {
+      var list = [];
+      if (bool(Q.ci, false)) {
+        list.push({ label: 'CI', mode: 'ci', dose24: num(Q.dose24, 16000), on: true });
+      } else {
+        list.push({ label: 'A', dose: num(Q.dose, d.dose), tau: num(Q.tau, d.tau),
+                    tinf: num(Q.tinf, d.tinf), on: true });
+      }
+      if (Q.dose2) {
+        list.push({ label: 'B', dose: num(Q.dose2, d.dose), tau: num(Q.tau2, d.tau),
+                    tinf: num(Q.tinf2, d.tinf), on: true });
+      }
+      if (Q.dose3) {
+        list.push({ label: 'C', dose: num(Q.dose3, d.dose), tau: num(Q.tau3, d.tau),
+                    tinf: num(Q.tinf3, d.tinf), on: true });
+      }
+      return list;
+    }
+    return [{ label: 'A', dose: d.dose, tau: d.tau, tinf: d.tinf, on: true }];
+  }
+
+  function regLabel(r) {
+    if (r.mode === 'ci') return (r.dose24 / 1000) + ' g/24 h CI';
+    return (r.dose >= 1000 ? (r.dose / 1000) + ' g' : r.dose + ' mg') +
+           ' q' + r.tau + 'h, ' + r.tinf + ' h inf';
+  }
+
+  function renderRegimens() {
+    var host = $('regimens');
+    if (!host) return;
+    host.innerHTML = '';
+    S.regimens.forEach(function (r, i) {
+      var d = document.createElement('div');
+      d.style.cssText = 'border-top:1px solid var(--line2);padding-top:8px;margin-top:8px';
+      if (i === 0) d.style.cssText = '';
+      var swatch = '<span style="display:inline-block;width:11px;height:11px;' +
+        'border-radius:3px;background:' + COLORS[i % 3] + ';vertical-align:middle"></span>';
+      d.innerHTML =
+        '<div class="inline" style="justify-content:space-between;margin-bottom:5px">' +
+          '<span style="font-size:.78rem;font-weight:600">' + swatch + ' ' + r.label + '</span>' +
+          '<span>' +
+            '<label class="inline" style="display:inline-flex;font-size:.72rem">' +
+              '<input type="checkbox" data-ci="' + i + '"' + (r.mode === 'ci' ? ' checked' : '') + '> CI</label>' +
+            (S.regimens.length > 1 ? ' <button class="mini" data-del="' + i + '">×</button>' : '') +
+          '</span>' +
+        '</div>' +
+        (r.mode === 'ci'
+          ? '<div class="row"><div><label>Daily dose (mg/24 h)</label>' +
+            '<input type="number" step="500" data-f="dose24" data-i="' + i + '" value="' + (r.dose24 || 16000) + '"></div></div>'
+          : '<div class="row r3">' +
+            '<div><label>Dose (mg)</label><input type="number" step="250" data-f="dose" data-i="' + i + '" value="' + r.dose + '"></div>' +
+            '<div><label>&tau; (h)</label><input type="number" step="1" data-f="tau" data-i="' + i + '" value="' + r.tau + '"></div>' +
+            '<div><label>Inf (h)</label><input type="number" step="0.25" data-f="tinf" data-i="' + i + '" value="' + r.tinf + '"></div>' +
+            '</div>');
+      host.appendChild(d);
+    });
+    host.querySelectorAll('input[data-f]').forEach(function (el) {
+      el.addEventListener('input', function () {
+        var i = +el.getAttribute('data-i'), f = el.getAttribute('data-f');
+        S.regimens[i][f] = parseFloat(el.value);
+        run();
+      });
+    });
+    host.querySelectorAll('input[data-ci]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var i = +el.getAttribute('data-ci'), r = S.regimens[i];
+        if (el.checked) {
+          r.mode = 'ci';
+          r.dose24 = r.dose && r.tau ? Math.round((r.dose * 24) / r.tau) : 16000;
+        } else {
+          delete r.mode;
+          var m = model().defaultRegimen;
+          r.dose = r.dose || m.dose; r.tau = r.tau || m.tau; r.tinf = r.tinf || m.tinf;
+        }
+        renderRegimens(); run();
+      });
+    });
+    host.querySelectorAll('button[data-del]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        S.regimens.splice(+el.getAttribute('data-del'), 1);
+        S.regimens.forEach(function (r, j) { r.label = 'ABC'.charAt(j); });
+        renderRegimens(); run();
+      });
+    });
+  }
+
+  /* ---------------- selectors ---------------- */
+  function drugs() {
+    var seen = [], out = [];
+    M.MODELS.forEach(function (m) {
+      if (seen.indexOf(m.drug) < 0) { seen.push(m.drug); out.push(m.drug); }
+    });
+    return out;
+  }
+
+  function fillSelectors() {
+    var dsel = $('drug');
+    if (dsel) {
+      dsel.innerHTML = drugs().map(function (d) {
+        return '<option value="' + d + '">' + d + '</option>';
+      }).join('');
+      dsel.value = model().drug;
+      dsel.onchange = function () {
+        var first = null;
+        M.MODELS.forEach(function (m) { if (m.drug === dsel.value && !first) first = m; });
+        S.modelId = first.id; S.targetId = null;
+        syncModel(true); run();
+      };
+    }
+    var msel = $('model');
+    if (msel) {
+      msel.innerHTML = M.MODELS.filter(function (m) { return m.drug === model().drug; })
+        .map(function (m) {
+          return '<option value="' + m.id + '">' + m.label + '</option>';
+        }).join('');
+      msel.value = S.modelId;
+      msel.onchange = function () {
+        S.modelId = msel.value; S.targetId = null; syncModel(true); run();
+      };
+    }
+    [['target', function (v) { S.targetId = v; }],
+     ['wTarget', function (v) { S.targetId = v; }]].forEach(function (pair) {
+      var el = $(pair[0]);
+      if (!el) return;
+      el.innerHTML = model().targets.map(function (t) {
+        return '<option value="' + t.id + '">' + t.label + '</option>';
+      }).join('');
+      el.value = target().id;
+      el.onchange = function () { pair[1](el.value); syncTargetSelects(); run(); };
+    });
+  }
+  function syncTargetSelects() {
+    ['target', 'wTarget'].forEach(function (id) {
+      var el = $(id); if (el) el.value = target().id;
+    });
+  }
+
+  /* Show only the covariate inputs the selected model actually uses —
+     entering a creatinine eGFR into a cystatin-C model is a real misuse. */
+  function syncModel(resetDefaults) {
+    var m = model();
+    if (resetDefaults) {
+      S.regimens = [{ label: 'A', dose: m.defaultRegimen.dose, tau: m.defaultRegimen.tau,
+                      tinf: m.defaultRegimen.tinf, on: true }];
+      if (m.defaultRegimen.mode === 'ci') S.regimens[0] = { label: 'A', mode: 'ci', dose24: 16000, on: true };
+      S.mic = m.defaultMic;
+    }
+    var usesCysC = m.renal === 'cysc';
+    if ($('scrBlock')) $('scrBlock').classList.toggle('hidden', usesCysC);
+    if ($('cyscBlock')) $('cyscBlock').classList.toggle('hidden', !usesCysC);
+    var has = function (k) { return m.covariates.indexOf(k) >= 0; };
+    if ($('ecmoBlock')) $('ecmoBlock').classList.toggle('hidden', !has('ecmo'));
+    if ($('rrtBlock')) $('rrtBlock').classList.toggle('hidden', !has('rrt'));
+    if ($('dialysisBlock')) $('dialysisBlock').classList.toggle('hidden', !has('dialysis'));
+    if ($('rdBlock')) $('rdBlock').classList.toggle('hidden', !has('rd'));
+    // Weight only moves this model's renal estimate, never its volumes.
+    if ($('wt')) {
+      $('wt').title = (m.id === 'mem_shekar2014')
+        ? 'Affects CLcr only: this model applies no weight scaling to volumes.'
+        : '';
+    }
+    if ($('modelCite')) {
+      $('modelCite').innerHTML = m.source +
+        ' &nbsp;<a href="https://doi.org/' + m.doi + '" target="_blank" rel="noopener">doi</a>' +
+        '<br>Fitted to <b>' + m.matrix + '</b>' +
+        (m.fu !== 1 ? ', free fraction ' + m.fu : '') + '.';
+    }
+    if ($('modelNote')) {
+      var n = '';
+      if (m.note) n += '<div class="note">' + m.note + '</div>';
+      if (m.bayesian === false) n += '<div class="note">' + m.bayesianNote + '</div>';
+      $('modelNote').innerHTML = n;
+    }
+    if ($('panelTdm')) $('panelTdm').classList.toggle('hidden', m.bayesian === false);
+    fillSelectors();
+    renderRegimens();
+    if ($('mic')) $('mic').value = S.mic;
+    if ($('wMic')) $('wMic').value = S.mic;
+    var wl = $('wRenalLab');
+    if (wl) wl.textContent = usesCysC ? 'eGFR (cystatin C)' : 'CLcr (mL/min)';
+    var wr = $('wRenal');
+    if (wr) {
+      var r = renalOf(m);
+      wr.value = Math.round(r.crcl != null ? r.crcl : r.egfr);
+    }
+  }
+
+  /* ---------------- rendering ---------------- */
+  var LAST = null;
+
+  function run() {
+    var m = modelResolved(), cov = covFull(), t = target(),
+        mics = M.LADDER, results = [];
+
+    S.regimens.forEach(function (r, i) {
+      var reg = r.mode === 'ci'
+        ? { mode: 'ci', dose24: r.dose24, duration: 24 * 5 }
+        : { dose: r.dose, tau: r.tau, tinf: r.tinf };
+      var res = P.simulate({
+        model: m, cov: cov, regimen: reg, target: t, mics: mics,
+        mic: S.mic, n: S.n, seed: S.seed, nT: 140, nGrid: 260
+      });
+      res.color = COLORS[i % 3];
+      res.label = regLabel(r);
+      results.push(res);
+    });
+    LAST = { results: results, model: m, target: t, cov: cov };
+    drawPta(results, t);
+    drawConc(results, t);
+    drawSummary(results, t);
+    drawCfr(results);
+    drawRenal();
+  }
+
+  function drawPta(results, t) {
+    var cv = $('cvPta'); if (!cv) return;
+    var pl = new Plot(cv, { xlog: true });
+    var mics = M.LADDER;
+    pl.setScale(mics[0], mics[mics.length - 1], 0, 100);
+    var xt = mics.map(function (v) {
+      return { v: v, l: v < 1 ? String(v) : String(v) };
+    });
+    pl.axes('MIC (mg/L)', 'PTA (%)', xt, niceTicks(0, 100, 5));
+    pl.hline(S.ptaThresh, '#9aa3ab', 1.5, [5, 4]);
+    pl.text(S.ptaThresh + '%', pl.W - pl.pad.r - 3, pl.py(S.ptaThresh) - 9, '#7c858e', 'right');
+    results.forEach(function (r) {
+      pl.line(r.pta.map(function (p) { return p.mic; }),
+              r.pta.map(function (p) { return p.pta; }), r.color, WIDGET ? 3 : 2.4);
+    });
+    var leg = $('legPta');
+    if (leg) {
+      leg.innerHTML = results.map(function (r) {
+        var bp = P.pkpdBreakpoint(r.pta, S.ptaThresh);
+        return '<span><i style="background:' + r.color + '"></i>' + r.label +
+               ' &mdash; breakpoint ' + (bp == null ? '&lt;' + M.LADDER[0] : bp) + ' mg/L</span>';
+      }).join('') +
+      '<span style="color:var(--ink3)">' + t.label + ' &middot; n=' + S.n + '</span>';
+    }
+  }
+
+  function drawConc(results, t) {
+    var cv = $('cvConc'); if (!cv) return;
+    var pl = new Plot(cv, { ylog: S.logy });
+    var r0 = results[0],
+        tspan = r0.tB - r0.tA,
+        ymax = 0;
+    results.forEach(function (r) {
+      r.hi.forEach(function (v) { if (v > ymax) ymax = v; });
+    });
+    var micLine = S.mic * (t.micMultiplier || 1);
+    ymax = Math.max(ymax, micLine * 1.25);
+    var ymin = S.logy ? Math.max(0.05, micLine / 50) : 0;
+    pl.setScale(0, tspan, ymin, ymax * 1.06);
+    var yt = S.logy
+      ? [0.1, 1, 10, 100, 1000].filter(function (v) { return v >= ymin && v <= ymax * 1.06; })
+          .map(function (v) { return { v: v, l: String(v) }; })
+      : niceTicks(0, ymax * 1.06, 5);
+    pl.axes('Time within dosing interval at steady state (h)',
+            'Concentration (mg/L)', niceTicks(0, tspan, 6), yt);
+
+    results.forEach(function (r) {
+      var xs = r.times.map(function (x) { return x - r.tA; });
+      if (results.length === 1) {
+        pl.band(xs, r.lo.map(function (v) { return Math.max(ymin, v); }), r.hi,
+                'rgba(0,114,178,.16)');
+      }
+      pl.line(xs, r.median.map(function (v) { return Math.max(ymin, v); }),
+              r.color, WIDGET ? 3 : 2.4);
+    });
+    // MIC (or 4xMIC) reference line
+    if (micLine > 0) {
+      pl.hline(micLine, MICCOL, 1.8, [6, 4]);
+      pl.text((t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC ' +
+              micLine + ' mg/L', pl.pad.l + 5, pl.py(micLine) - 9, MICCOL, 'left', true);
+    }
+    // Bayesian individual overlay
+    if (LASTMAP && LASTMAP.curve && results.length === 1) {
+      pl.line(LASTMAP.curve.t, LASTMAP.curve.c.map(function (v) { return Math.max(ymin, v); }),
+              BAYESCOL, 2.4);
+    }
+    var leg = $('legConc');
+    if (leg) {
+      leg.innerHTML =
+        results.map(function (r) {
+          return '<span><i style="background:' + r.color + '"></i>' + r.label + ' (median)</span>';
+        }).join('') +
+        (results.length === 1
+          ? '<span><i class="sw-band" style="background:rgba(0,114,178,.16)"></i>90% prediction interval</span>'
+          : '') +
+        '<span><i style="background:' + MICCOL + '"></i>' +
+          (t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC</span>';
+    }
+  }
+
+  function fmt(x, d) {
+    if (x == null || !isFinite(x)) return '—';
+    return x.toFixed(d == null ? 1 : d);
+  }
+
+  function drawSummary(results, t) {
+    var host = $('summary'); if (!host) return;
+    var m = model();
+    var rows = results.map(function (r) {
+      var e = r.exposure,
+          pta = r.ptaAtRefMic,
+          cls = pta >= S.ptaThresh ? 'ok' : 'bad';
+      return '<tr>' +
+        '<td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;' +
+          'background:' + r.color + '"></span> ' + r.label + '</td>' +
+        '<td class="num"><b>' + fmt(pta) + '%</b> <span class="pill ' + cls + '">' +
+          (pta >= S.ptaThresh ? 'attained' : 'not attained') + '</span></td>' +
+        '<td class="num">' + fmt(e.tAbove.median) + ' (' + fmt(e.tAbove.p5, 0) + '–' + fmt(e.tAbove.p95, 0) + ')</td>' +
+        '<td class="num">' + fmt(e.auc24.median, 0) + ' (' + fmt(e.auc24.p5, 0) + '–' + fmt(e.auc24.p95, 0) + ')</td>' +
+        '<td class="num">' + fmt(e.cmax.median) + '</td>' +
+        '<td class="num">' + fmt(e.cmin.median, 2) + '</td>' +
+        '<td class="num">' + (P.pkpdBreakpoint(r.pta, S.ptaThresh) == null
+            ? '&lt;' + M.LADDER[0] : P.pkpdBreakpoint(r.pta, S.ptaThresh)) + '</td>' +
+        '</tr>';
+    }).join('');
+    host.innerHTML =
+      '<div class="big">' + fmt(results[0].ptaAtRefMic) + '%<small> PTA &middot; ' +
+        t.label + ' at MIC ' + S.mic + ' mg/L &middot; ' + results[0].label + '</small></div>' +
+      '<table style="margin-top:10px"><thead><tr>' +
+        '<th>Regimen</th><th class="num">PTA at MIC ' + S.mic + '</th>' +
+        '<th class="num">%fT&gt;MIC med (90% PI)</th>' +
+        '<th class="num">AUC₀₋₂₄ med (90% PI)</th>' +
+        '<th class="num">Cmax</th><th class="num">Cmin</th>' +
+        '<th class="num">Breakpoint</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<p class="cite" style="margin:8px 0 0">Exposure metrics are computed over the ' +
+        'steady-state dosing interval. AUC and Cmax/Cmin are total drug; %fT&gt;MIC uses ' +
+        'free drug (fu = ' + m.fu + '). Breakpoint = highest ladder MIC with PTA ≥ ' +
+        S.ptaThresh + '%.</p>';
+  }
+
+  function parseMicDist() {
+    var el = $('micDist');
+    if (!el || !el.value.trim()) return null;
+    var out = [];
+    el.value.split(/[\n;]+/).forEach(function (ln) {
+      var p = ln.split(/[,\t ]+/).filter(function (x) { return x !== ''; });
+      if (p.length >= 2) {
+        var mic = parseFloat(p[0]), f = parseFloat(p[1]);
+        if (isFinite(mic) && isFinite(f)) out.push({ mic: mic, freq: f });
+      }
+    });
+    return out.length ? out : null;
+  }
+
+  function drawCfr(results) {
+    var host = $('cfrOut'); if (!host) return;
+    var dist = parseMicDist();
+    if (!dist) { host.innerHTML = ''; return; }
+    var onLadder = dist.filter(function (d) {
+      return M.LADDER.some(function (v) { return Math.abs(v - d.mic) < 1e-9; });
+    });
+    var html = results.map(function (r) {
+      var v = P.cfr(r.pta, dist);
+      return '<div class="kv"><span>' + r.label + '</span><span>' + fmt(v) + '%</span></div>';
+    }).join('');
+    host.innerHTML = '<div style="margin-top:8px"><b style="font-size:.75rem">CFR</b>' + html +
+      (onLadder.length < dist.length
+        ? '<div class="note">' + (dist.length - onLadder.length) + ' MIC value(s) are not on the ' +
+          'simulated ladder (' + M.LADDER.join(', ') + ' mg/L) and were ignored.</div>'
+        : '') + '</div>';
+  }
+
+  function drawRenal() {
+    var host = $('renalOut'); if (!host) return;
+    var m = model(), r = renalOf(m),
+        lab = RENAL_LABEL[r.kind] || 'Renal function',
+        rows = r.crcl != null
+          ? '<div class="kv"><span>' + lab + '</span><span>' +
+            fmt(r.crcl) + ' mL/min</span></div>'
+          : '<div class="kv"><span>' + lab + '</span><span>' +
+            fmt(r.egfr) + (r.kind === 'mdrd' ? ' mL/min' : ' mL/min/1.73m²') +
+            '</span></div>';
+    // The clearance a model actually uses is worth showing next to the
+    // renal estimate, because several of these models are step functions
+    // of dialysis modality rather than smooth functions of GFR.
+    var pr = modelResolved().params(covFull());
+    rows += '<div class="kv"><span>Typical CL</span><span>' +
+            fmt(pr.CL) + ' L/h</span></div>';
+    host.innerHTML = rows;
+  }
+
+  /* ---------------- Bayesian forecasting ---------------- */
+  var LASTMAP = null;
+  var tdmSamples = [{ time: '', conc: '' }];
+
+  function renderTdm() {
+    var tb = $('tdmRows'); if (!tb) return;
+    tb.innerHTML = tdmSamples.map(function (s, i) {
+      return '<tr>' +
+        '<td><input type="number" step="0.1" data-t="' + i + '" value="' + s.time + '" style="width:100%"></td>' +
+        '<td><input type="number" step="0.1" data-c="' + i + '" value="' + s.conc + '" style="width:100%"></td>' +
+        '<td><button class="mini" data-x="' + i + '">×</button></td></tr>';
+    }).join('');
+    tb.querySelectorAll('input[data-t]').forEach(function (el) {
+      el.oninput = function () { tdmSamples[+el.getAttribute('data-t')].time = el.value; };
+    });
+    tb.querySelectorAll('input[data-c]').forEach(function (el) {
+      el.oninput = function () { tdmSamples[+el.getAttribute('data-c')].conc = el.value; };
+    });
+    tb.querySelectorAll('button[data-x]').forEach(function (el) {
+      el.onclick = function () {
+        tdmSamples.splice(+el.getAttribute('data-x'), 1);
+        if (!tdmSamples.length) tdmSamples.push({ time: '', conc: '' });
+        renderTdm();
+      };
+    });
+  }
+
+  function runMap() {
+    var m = modelResolved(), cov = covFull(), out = $('mapOut');
+    if (m.bayesian === false) { out.innerHTML = '<div class="note">' + m.bayesianNote + '</div>'; return; }
+    var samples = tdmSamples.map(function (s) {
+      return { time: parseFloat(s.time), conc: parseFloat(s.conc) };
+    }).filter(function (s) { return isFinite(s.time) && isFinite(s.conc); });
+    if (samples.length < 1) {
+      out.innerHTML = '<div class="note">Enter at least one time–concentration pair.</div>';
+      return;
+    }
+    var reg = { dose: num($('tdmDose').value, 1000), tau: num($('tdmTau').value, 12),
+                tinf: num($('tdmTinf').value, 1), nDoses: Math.max(1, num($('tdmN').value, 4)) };
+    var sched = P.buildSchedule(reg);
+    var fit = P.mapEstimate(m, cov, sched.events, samples);
+
+    // Individual profile for the overlay and for exposure metrics.
+    var tEnd = sched.tEnd + reg.tau, ts = [], cs = [], i;
+    for (i = 0; i <= 300; i++) { var tt = (i * tEnd) / 300; ts.push(tt); cs.push(fit.predict(tt)); }
+    // Overlay is drawn on the steady-state-interval axis of the main plot.
+    var r0 = LAST && LAST.results[0];
+    if (r0) {
+      var ots = [], ocs = [], tau = r0.tB - r0.tA, base = sched.tEnd - reg.tau;
+      for (i = 0; i <= 140; i++) {
+        var u = (i * tau) / 140;
+        ots.push(u); ocs.push(fit.predict(base + u));
+      }
+      LASTMAP = { fit: fit, curve: { t: ots, c: ocs } };
+    }
+
+    var t = target(),
+        cfInd = fit.predict,
+        mInd = P.metrics(cfInd, sched.tEnd - reg.tau, sched.tEnd,
+                         { fu: m.fu, mic: S.mic * (t.micMultiplier || 1), nGrid: 800 });
+    var hit = P.meetsTarget(mInd, t, S.mic);
+
+    // Smallest dose (same tau/tinf, 250 mg steps) meeting the target for
+    // this individual — the dose-adjustment question TDM is asked for.
+    var rec = null;
+    for (var d = 250; d <= 12000; d += 250) {
+      var rr = { dose: d, tau: reg.tau, tinf: reg.tinf,
+                 nDoses: P.dosesToSteadyState(fit.params, m.ncmt, reg.tau) };
+      var sc = P.buildSchedule(rr), cf2 = P.concFn(fit.params, m.ncmt, sc);
+      var mm = P.metrics(cf2, sc.tEnd - reg.tau, sc.tEnd,
+                         { fu: m.fu, mic: S.mic * (t.micMultiplier || 1), nGrid: 400 });
+      if (P.meetsTarget(mm, t, S.mic)) { rec = { dose: d, metrics: mm }; break; }
+    }
+
+    var keys = fit.keys;
+    out.innerHTML =
+      '<div class="grid2">' +
+      '<div><table><thead><tr><th>Parameter</th><th class="num">Population</th>' +
+        '<th class="num">Individual (MAP)</th><th class="num">η</th></tr></thead><tbody>' +
+        keys.map(function (k, i2) {
+          return '<tr><td>' + k + '</td><td class="num">' + fmt(fit.typicalParams[k], 2) +
+            '</td><td class="num"><b>' + fmt(fit.params[k], 2) + '</b></td>' +
+            '<td class="num">' + fmt(fit.etas[i2], 2) + '</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<table style="margin-top:8px"><thead><tr><th>Sample</th><th class="num">Observed</th>' +
+        '<th class="num">MAP predicted</th></tr></thead><tbody>' +
+        fit.fitted.map(function (f, i3) {
+          return '<tr><td>t = ' + fmt(f.time, 1) + ' h</td><td class="num">' + fmt(f.obs, 2) +
+            '</td><td class="num">' + fmt(f.pred, 2) + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+      '<div>' +
+        '<div class="kv"><span>Individual ' + t.label + '</span><span>' +
+          (t.type === 'auc' ? fmt(mInd.auc24, 0) + ' mg·h/L'
+            : t.type === 'cmin' ? fmt(mInd.cmin, 2) + ' mg/L'
+            : fmt(mInd.tAbove) + '%') +
+          ' <span class="pill ' + (hit ? 'ok' : 'bad') + '">' +
+          (hit ? 'target met' : 'target missed') + '</span></span></div>' +
+        '<div class="kv"><span>Individual AUC₀₋₂₄</span><span>' + fmt(mInd.auc24, 0) + ' mg·h/L</span></div>' +
+        '<div class="kv"><span>Individual Cmin</span><span>' + fmt(mInd.cmin, 2) + ' mg/L</span></div>' +
+        '<div class="kv"><span>Individual Cmax</span><span>' + fmt(mInd.cmax, 1) + ' mg/L</span></div>' +
+        '<div style="margin-top:10px">' +
+          (rec
+            ? '<b style="font-size:.8rem">Smallest dose meeting ' + t.label + '</b>' +
+              '<div class="big" style="font-size:1.4rem">' + rec.dose + ' mg q' + reg.tau + 'h' +
+              '<small> (' + reg.tinf + ' h infusion, this individual)</small></div>'
+            : '<div class="note">No dose up to 12 g per interval met the target for this ' +
+              'individual at the current interval and infusion duration.</div>') +
+        '</div>' +
+        '<p class="cite">MAP estimate maximises the posterior combining these samples with ' +
+        'the model prior (ω) and residual error (additive ' + (m.err.add || 0) + ' mg/L, ' +
+        'proportional ' + Math.round((m.err.prop || 0) * 100) + '%). Sparse samples shrink ' +
+        'toward the population value — that is the intended behaviour, not a fitting failure.</p>' +
+      '</div></div>';
+    drawConc(LAST.results, t);
+  }
+
+  /* ---------------- embed URL builder ---------------- */
+  function buildEmbed() {
+    var r = S.regimens[0], p = ['mode=widget', 'model=' + S.modelId,
+      'target=' + target().id, 'mic=' + S.mic, 'n=' + S.n, 'seed=' + S.seed,
+      'pta=' + S.ptaThresh];
+    if (r.mode === 'ci') { p.push('ci=1'); p.push('dose24=' + r.dose24); }
+    else { p.push('dose=' + r.dose, 'tau=' + r.tau, 'tinf=' + r.tinf); }
+    if (S.regimens[1]) {
+      var b = S.regimens[1];
+      if (!b.mode) p.push('dose2=' + b.dose, 'tau2=' + b.tau, 'tinf2=' + b.tinf);
+    }
+    if (S.regimens[2]) {
+      var c = S.regimens[2];
+      if (!c.mode) p.push('dose3=' + c.dose, 'tau3=' + c.tau, 'tinf3=' + c.tinf);
+    }
+    ['wt', 'age', 'sex', 'scr', 'scrUnit', 'cysc', 'ht', 'rd'].forEach(function (k) {
+      if (S.cov[k] != null && S.cov[k] !== '') p.push(k + '=' + encodeURIComponent(S.cov[k]));
+    });
+    if (S.cov.ecmo) p.push('ecmo=1');
+    if (S.cov.rrt) p.push('rrt=1');
+    if (S.cov.dialysis && S.cov.dialysis !== 'none') p.push('dialysis=' + S.cov.dialysis);
+    if (S.logy) p.push('logy=1');
+    var file = window.location.pathname.split('/').pop() || 'mipd-lab.html';
+    var url = file + '?' + p.join('&');
+    var ta = $('embedOut');
+    ta.style.display = 'block';
+    ta.value = '<iframe src="' + url + '" width="100%" height="560" ' +
+               'style="border:0" loading="lazy"></iframe>';
+    ta.select();
+  }
+
+  /* ---------------- init ---------------- */
+  function bindCov() {
+    var map = [['wt', 'wt', 'num'], ['age', 'age', 'num'], ['ht', 'ht', 'num'],
+               ['scr', 'scr', 'num'], ['cysc', 'cysc', 'num'], ['rd', 'rd', 'num'],
+               ['sex', 'sex', 'str'], ['scrUnit', 'scrUnit', 'str'],
+               ['dialysis', 'dialysis', 'str']];
+    map.forEach(function (m2) {
+      var el = $(m2[0]); if (!el) return;
+      el.value = S.cov[m2[1]];
+      el.addEventListener('input', function () {
+        S.cov[m2[1]] = m2[2] === 'num' ? parseFloat(el.value) : el.value;
+        syncWidgetRenal(); run();
+      });
+      el.addEventListener('change', function () {
+        S.cov[m2[1]] = m2[2] === 'num' ? parseFloat(el.value) : el.value;
+        syncWidgetRenal(); run();
+      });
+    });
+    var ec = $('ecmo');
+    if (ec) {
+      ec.checked = !!S.cov.ecmo;
+      ec.onchange = function () { S.cov.ecmo = ec.checked; syncModel(false); run(); };
+    }
+    var rr = $('rrt');
+    if (rr) {
+      rr.checked = !!S.cov.rrt;
+      rr.onchange = function () { S.cov.rrt = rr.checked; syncModel(false); run(); };
+    }
+  }
+  function syncWidgetRenal() {
+    var wr = $('wRenal'); if (!wr) return;
+    var r = renalOf(model());
+    wr.value = Math.round(r.crcl != null ? r.crcl : r.egfr);
+  }
+
+  /* In widget mode the renal input is the covariate itself: back-solve
+     serum creatinine (or cystatin C) so the model sees the value shown. */
+  function setRenalDirect(v) {
+    var m = model(), c = S.cov, lo, hi, i, mid;
+    if (m.renal === 'cysc') {
+      // Invert CKD-EPI cystatin C for cystatin C.
+      lo = 0.2; hi = 8;
+      for (i = 0; i < 60; i++) {
+        mid = (lo + hi) / 2;
+        if (P.ckdEpiCysC({ cysc: mid, age: c.age, sex: c.sex }) > v) lo = mid;
+        else hi = mid;
+      }
+      c.cysc = (lo + hi) / 2;
+      return;
+    }
+    if (m.renal === 'ckdepi' || m.renal === 'mdrd') {
+      // Both are decreasing in creatinine, so bisect on SCr in mg/dL.
+      var f = (m.renal === 'ckdepi')
+        ? function (s) { return P.ckdEpiCr({ scr: s, scrUnit: 'mg/dL', age: c.age, sex: c.sex }); }
+        : function (s) { return P.mdrd({ scr: s, scrUnit: 'mg/dL', age: c.age, sex: c.sex }); };
+      lo = 0.1; hi = 25;
+      for (i = 0; i < 80; i++) {
+        mid = (lo + hi) / 2;
+        if (f(mid) > v) lo = mid; else hi = mid;
+      }
+      c.scrUnit = 'mg/dL'; c.scr = (lo + hi) / 2;
+      return;
+    }
+    // Cockcroft-Gault inverts in closed form.
+    var g = c.sex === 'F' ? 0.85 : 1;
+    c.scrUnit = 'mg/dL';
+    c.scr = ((140 - c.age) * c.wt * g) / (72 * v);
+  }
+
+  function bindWidget() {
+    var pairs = [['wDose', function (v) {
+        var r = S.regimens[0];
+        if (r.mode === 'ci') r.dose24 = v; else r.dose = v;
+      }],
+      ['wTau', function (v) { S.regimens[0].tau = v; }],
+      ['wTinf', function (v) { S.regimens[0].tinf = v; }],
+      ['wMic', function (v) { S.mic = v; }],
+      ['wRenal', function (v) { setRenalDirect(v); }]];
+    pairs.forEach(function (p) {
+      var el = $(p[0]); if (!el) return;
+      el.addEventListener('input', function () {
+        var v = parseFloat(el.value);
+        if (isFinite(v)) { p[1](v); run(); }
+      });
+    });
+    var r = S.regimens[0];
+    if ($('wDose')) $('wDose').value = r.mode === 'ci' ? r.dose24 : r.dose;
+    if ($('wTau')) $('wTau').value = r.tau || '';
+    if ($('wTinf')) $('wTinf').value = r.tinf || '';
+    if (r.mode === 'ci') {
+      ['wTau', 'wTinf'].forEach(function (id) {
+        var e = $(id); if (e) e.parentNode.style.display = 'none';
+      });
+    }
+  }
+
+  function renderPending() {
+    var host = $('pendingList'); if (!host) return;
+    host.innerHTML = M.PENDING.map(function (p) {
+      return '<div style="margin-bottom:7px"><b>' + p.drug + ' — ' + p.label + '</b><br>' +
+        p.reason + ' <a href="https://doi.org/' + p.doi + '" target="_blank" rel="noopener">doi</a></div>';
+    }).join('');
+  }
+
+  function init() {
+    if (WIDGET) document.body.classList.add('widget');
+    var m0 = null;
+    M.MODELS.forEach(function (x) { if (x.id === S.modelId) m0 = x; });
+    if (!m0) { S.modelId = M.MODELS[0].id; m0 = M.MODELS[0]; }
+
+    S.cov = {
+      wt: num(Q.wt, 80), age: num(Q.age, 60), ht: num(Q.ht, 172),
+      sex: Q.sex === 'F' ? 'F' : 'M',
+      scr: num(Q.scr, 1.0), scrUnit: Q.scrUnit === 'umol/L' ? 'umol/L' : 'mg/dL',
+      cysc: num(Q.cysc, 1.0), ecmo: bool(Q.ecmo, false),
+      rrt: bool(Q.rrt, false),
+      dialysis: (['none', 'cont', 'semicont'].indexOf(Q.dialysis) >= 0
+                 ? Q.dialysis : 'none'),
+      // 845 mL/24 h is the population median residual diuresis in the
+      // O'Jeanson cohort, which is the value its typical clearance is
+      // centred on, so it is the neutral default.
+      rd: num(Q.rd, 845)
+    };
+    S.mic = num(Q.mic, m0.defaultMic);
+    S.regimens = defaultRegimens();
+    if (Q.crcl) setRenalDirect(num(Q.crcl, 80));
+    if (Q.egfr) setRenalDirect(num(Q.egfr, 80));
+
+    syncModel(false);
+    bindCov();
+    bindWidget();
+    renderPending();
+    renderTdm();
+
+    [['mic', function (v) { S.mic = v; var w = $('wMic'); if (w) w.value = v; }],
+     ['ptaThresh', function (v) { S.ptaThresh = v; }],
+     ['nsim', function (v) { S.n = Math.max(50, Math.min(20000, v)); }],
+     ['seed', function (v) { S.seed = v; }]].forEach(function (p) {
+      var el = $(p[0]); if (!el) return;
+      el.addEventListener('input', function () {
+        var v = parseFloat(el.value);
+        if (isFinite(v)) { p[1](v); run(); }
+      });
+    });
+    if ($('mic')) $('mic').value = S.mic;
+    var ly = $('logy');
+    if (ly) { ly.checked = S.logy; ly.onchange = function () { S.logy = ly.checked; run(); }; }
+    var md = $('micDist');
+    if (md) md.addEventListener('input', function () { drawCfr(LAST.results); });
+    if ($('addReg')) $('addReg').onclick = function () {
+      if (S.regimens.length >= 3) return;
+      var d = model().defaultRegimen;
+      S.regimens.push({ label: 'ABC'.charAt(S.regimens.length),
+                        dose: d.dose, tau: d.tau, tinf: d.tinf, on: true });
+      renderRegimens(); run();
+    };
+    if ($('addTdm')) $('addTdm').onclick = function () {
+      tdmSamples.push({ time: '', conc: '' }); renderTdm();
+    };
+    if ($('runMap')) $('runMap').onclick = runMap;
+    if ($('mkEmbed')) $('mkEmbed').onclick = buildEmbed;
+    var dr = model().defaultRegimen;
+    if ($('tdmDose')) $('tdmDose').value = dr.dose;
+    if ($('tdmTau')) $('tdmTau').value = dr.tau;
+    if ($('tdmTinf')) $('tdmTinf').value = dr.tinf;
+
+    if (Q.title) $('title').textContent = Q.title;
+    else $('title').textContent = model().drug + ' — target attainment';
+    $('subtitle').innerHTML = model().label + ' &middot; ' +
+      'Monte Carlo, n = ' + S.n + ', seed ' + S.seed;
+    $('footer').innerHTML = 'Simulation for teaching and exploratory PK/PD analysis. ' +
+      'Not a medical device and not a substitute for clinical judgement or local ' +
+      'dosing policy; individual dosing decisions require a qualified clinician with ' +
+      'the full patient context.';
+
+    if (WIDGET) {
+      var panel = Q.panel || 'both';
+      if (panel === 'pta' || panel === 'conc') {
+        var keep = panel === 'pta' ? 0 : 1,
+            kids = $('panelPta').querySelectorAll('.grid2 > div');
+        kids[1 - keep].style.display = 'none';
+        $('panelPta').querySelector('.grid2').style.gridTemplateColumns = '1fr';
+      }
+      if (bool(Q.summary, true) === false) $('panelSummary').classList.add('hidden');
+      if (bool(Q.controls, true) === false) $('wstripCard').classList.add('hidden');
+    }
+
+    run();
+    window.addEventListener('resize', function () { if (LAST) run(); });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else init();
+})();
+
+</script>
+</body>
+</html>

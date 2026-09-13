@@ -1,0 +1,978 @@
+/* =====================================================================
+   app.js — UI, canvas plotting and URL-parameter wiring for MIPD Lab.
+   Depends on PKPD (pkpd-core.js) and PKPD_MODELS (models.js).
+   No external libraries, no network calls: the built HTML file is fully
+   self-contained so it works offline inside a slide deck.
+   ===================================================================== */
+(function () {
+  'use strict';
+  var P = window.PKPD, M = window.PKPD_MODELS;
+  var $ = function (id) { return document.getElementById(id); };
+
+  var COLORS = ['#0072B2', '#E69F00', '#009E73'];
+  var MICCOL = '#D55E00', BAYESCOL = '#CC79A7';
+
+  /* ---------------- URL parameters ---------------- */
+  var Q = (function () {
+    var o = {}, s = window.location.search.replace(/^\?/, '');
+    if (!s) return o;
+    s.split('&').forEach(function (kv) {
+      if (!kv) return;
+      var i = kv.indexOf('='), k = i < 0 ? kv : kv.slice(0, i),
+          v = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1).replace(/\+/g, ' '));
+      o[k] = v;
+    });
+    return o;
+  })();
+  var WIDGET = Q.mode === 'widget';
+  var num = function (v, d) { var x = parseFloat(v); return isFinite(x) ? x : d; };
+  var bool = function (v, d) {
+    if (v == null) return d;
+    return v === '1' || v === 'true' || v === 'yes';
+  };
+
+  /* ---------------- state ---------------- */
+  var S = {
+    modelId: Q.model || 'pip_kim2022',
+    regimens: [],
+    targetId: Q.target || null,
+    mic: null,
+    ptaThresh: num(Q.pta, 90),
+    n: num(Q.n, WIDGET ? 600 : 1000),
+    seed: num(Q.seed, 20250101),
+    logy: bool(Q.logy, false),
+    cov: {}
+  };
+
+  function model() {
+    var m = null;
+    M.MODELS.forEach(function (x) { if (x.id === S.modelId) m = x; });
+    return m || M.MODELS[0];
+  }
+  function target() {
+    var m = model(), t = null;
+    m.targets.forEach(function (x) { if (x.id === S.targetId) t = x; });
+    return t || m.targets[0];
+  }
+
+  /* ---------------- canvas plotting ----------------
+     A small axes/line/band renderer. Deliberately hand-rolled: a CDN
+     charting library would break an offline slide deck.              */
+  function Plot(canvas, opts) {
+    opts = opts || {};
+    var dpr = window.devicePixelRatio || 1,
+        cssW = canvas.clientWidth || 520,
+        cssH = opts.height || (WIDGET ? 330 : 270);
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    var g = canvas.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, cssW, cssH);
+    var fs = WIDGET ? 13 : 11;
+    this.g = g; this.W = cssW; this.H = cssH; this.fs = fs;
+    this.pad = { l: WIDGET ? 56 : 50, r: 12, t: 10, b: WIDGET ? 44 : 38 };
+    this.xlog = !!opts.xlog; this.ylog = !!opts.ylog;
+  }
+  Plot.prototype.setScale = function (x0, x1, y0, y1) {
+    this.x0 = x0; this.x1 = x1; this.y0 = y0; this.y1 = y1;
+  };
+  Plot.prototype.px = function (x) {
+    var a = this.xlog ? Math.log10(Math.max(1e-9, x)) : x,
+        b = this.xlog ? Math.log10(Math.max(1e-9, this.x0)) : this.x0,
+        c = this.xlog ? Math.log10(Math.max(1e-9, this.x1)) : this.x1;
+    return this.pad.l + ((a - b) / (c - b)) * (this.W - this.pad.l - this.pad.r);
+  };
+  Plot.prototype.py = function (y) {
+    var a = this.ylog ? Math.log10(Math.max(1e-9, y)) : y,
+        b = this.ylog ? Math.log10(Math.max(1e-9, this.y0)) : this.y0,
+        c = this.ylog ? Math.log10(Math.max(1e-9, this.y1)) : this.y1;
+    return this.H - this.pad.b - ((a - b) / (c - b)) * (this.H - this.pad.t - this.pad.b);
+  };
+  Plot.prototype.axes = function (xlab, ylab, xticks, yticks) {
+    var g = this.g, i;
+    // Tick arrays may be plain numbers or {v,l} objects; normalise once so
+    // every consumer below (gridlines included) sees a numeric value. A
+    // raw object reaching py() yields log10(object) = NaN on a log axis,
+    // which silently drops the gridline.
+    function norm(ts) {
+      return ts.map(function (t) {
+        return (t != null && typeof t === 'object')
+          ? { v: t.v, l: t.l != null ? t.l : String(t.v) }
+          : { v: t, l: String(t) };
+      });
+    }
+    xticks = norm(xticks); yticks = norm(yticks);
+    g.font = this.fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+    g.lineWidth = 1;
+    // gridlines
+    g.strokeStyle = '#eef1f4';
+    yticks.forEach(function (t) {
+      g.beginPath(); g.moveTo(this.pad.l, this.py(t.v));
+      g.lineTo(this.W - this.pad.r, this.py(t.v)); g.stroke();
+    }, this);
+    // frame
+    g.strokeStyle = '#c8cfd6';
+    g.beginPath();
+    g.moveTo(this.pad.l, this.pad.t); g.lineTo(this.pad.l, this.H - this.pad.b);
+    g.lineTo(this.W - this.pad.r, this.H - this.pad.b); g.stroke();
+    // ticks + labels
+    g.fillStyle = '#4a5158'; g.textAlign = 'center'; g.textBaseline = 'top';
+    xticks.forEach(function (t) {
+      var x = this.px(t.v);
+      g.beginPath(); g.moveTo(x, this.H - this.pad.b);
+      g.lineTo(x, this.H - this.pad.b + 4); g.stroke();
+      g.fillText(t.l, x, this.H - this.pad.b + 6);
+    }, this);
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    yticks.forEach(function (t) {
+      var y = this.py(t.v);
+      g.beginPath(); g.moveTo(this.pad.l - 4, y); g.lineTo(this.pad.l, y); g.stroke();
+      g.fillText(t.l, this.pad.l - 7, y);
+    }, this);
+    // axis titles
+    g.fillStyle = '#15181c';
+    g.font = '600 ' + this.fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'bottom';
+    g.fillText(xlab, this.pad.l + (this.W - this.pad.l - this.pad.r) / 2, this.H - 3);
+    g.save();
+    g.translate(11, this.pad.t + (this.H - this.pad.t - this.pad.b) / 2);
+    g.rotate(-Math.PI / 2); g.textBaseline = 'top';
+    g.fillText(ylab, 0, 0);
+    g.restore();
+  };
+  Plot.prototype.band = function (xs, los, his, color) {
+    var g = this.g, i;
+    g.beginPath();
+    g.moveTo(this.px(xs[0]), this.py(los[0]));
+    for (i = 1; i < xs.length; i++) g.lineTo(this.px(xs[i]), this.py(los[i]));
+    for (i = xs.length - 1; i >= 0; i--) g.lineTo(this.px(xs[i]), this.py(his[i]));
+    g.closePath(); g.fillStyle = color; g.fill();
+  };
+  Plot.prototype.line = function (xs, ys, color, w, dash) {
+    var g = this.g;
+    g.save();
+    g.beginPath(); g.lineWidth = w || 2; g.strokeStyle = color;
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    if (dash) g.setLineDash(dash);
+    for (var i = 0; i < xs.length; i++) {
+      var X = this.px(xs[i]), Y = this.py(ys[i]);
+      if (i === 0) g.moveTo(X, Y); else g.lineTo(X, Y);
+    }
+    g.stroke(); g.restore();
+  };
+  Plot.prototype.hline = function (y, color, w, dash) {
+    this.line([this.x0, this.x1], [y, y], color, w || 1.5, dash || [5, 4]);
+  };
+  Plot.prototype.points = function (xs, ys, color, r) {
+    var g = this.g;
+    for (var i = 0; i < xs.length; i++) {
+      g.beginPath();
+      g.arc(this.px(xs[i]), this.py(ys[i]), r || 4, 0, 2 * Math.PI);
+      g.fillStyle = color; g.fill();
+      g.lineWidth = 1.5; g.strokeStyle = '#fff'; g.stroke();
+    }
+  };
+  Plot.prototype.text = function (s, x, y, color, align, bold) {
+    var g = this.g;
+    g.font = (bold ? '600 ' : '') + this.fs + 'px -apple-system,Segoe UI,Roboto,sans-serif';
+    g.fillStyle = color || '#15181c';
+    g.textAlign = align || 'left'; g.textBaseline = 'middle';
+    g.fillText(s, x, y);
+  };
+
+  function niceTicks(lo, hi, want) {
+    var span = hi - lo;
+    if (!(span > 0)) return [lo];
+    var raw = span / (want || 5),
+        mag = Math.pow(10, Math.floor(Math.log10(raw))),
+        norm = raw / mag,
+        step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag,
+        start = Math.ceil(lo / step) * step, out = [];
+    for (var v = start; v <= hi + step * 1e-9; v += step) {
+      out.push(Math.abs(v) < 1e-12 ? 0 : parseFloat(v.toPrecision(12)));
+    }
+    return out;
+  }
+
+  /* ---------------- covariate handling ---------------- */
+  /* Each model declares which renal-function equation its clearance
+     covariate was estimated against. Substituting a different equation
+     is a silent misuse, so the mapping is explicit per model and the
+     computed value is labelled with the equation used in the readout. */
+  var RENAL_LABEL = {
+    cg: 'CLcr (Cockcroft-Gault)',
+    cysc: 'eGFR (CKD-EPI cystatin C)',
+    ckdepi: 'eGFR (CKD-EPI creatinine)',
+    mdrd: 'GFR (MDRD, 4-variable)'
+  };
+  function renalOf(m) {
+    var c = S.cov;
+    if (m.renal === 'cysc') {
+      return { egfr: P.ckdEpiCysC({ cysc: c.cysc, age: c.age, sex: c.sex }),
+               kind: 'cysc' };
+    }
+    if (m.renal === 'ckdepi') {
+      return { egfr: P.ckdEpiCr({ scr: c.scr, scrUnit: c.scrUnit,
+                                  age: c.age, sex: c.sex }), kind: 'ckdepi' };
+    }
+    if (m.renal === 'mdrd') {
+      return { egfr: P.mdrd({ scr: c.scr, scrUnit: c.scrUnit,
+                              age: c.age, sex: c.sex }), kind: 'mdrd' };
+    }
+    return { crcl: P.cockcroftGault({ wt: c.wt, age: c.age, sex: c.sex,
+                                      scr: c.scr, scrUnit: c.scrUnit }),
+             kind: 'cg' };
+  }
+  function covFull() {
+    var m = model(), c = {}, k;
+    for (k in S.cov) if (Object.prototype.hasOwnProperty.call(S.cov, k)) c[k] = S.cov[k];
+    var r = renalOf(m);
+    if (r.crcl != null) c.crcl = r.crcl;
+    if (r.egfr != null) c.egfr = r.egfr;
+    return c;
+  }
+
+  /* Some models carry covariate-dependent IIV (Kim: Vc IIV differs on
+     ECMO). Build a per-render shallow clone with the right omegas. */
+  function modelResolved() {
+    var m = model();
+    if (typeof m.iivFor !== 'function') return m;
+    var clone = {}, k;
+    for (k in m) if (Object.prototype.hasOwnProperty.call(m, k)) clone[k] = m[k];
+    clone.iiv = m.iivFor(S.cov);
+    return clone;
+  }
+
+  /* ---------------- regimen UI ---------------- */
+  function defaultRegimens() {
+    var m = model(), d = m.defaultRegimen;
+    if (Q.dose || Q.ci) {
+      var list = [];
+      if (bool(Q.ci, false)) {
+        list.push({ label: 'CI', mode: 'ci', dose24: num(Q.dose24, 16000), on: true });
+      } else {
+        list.push({ label: 'A', dose: num(Q.dose, d.dose), tau: num(Q.tau, d.tau),
+                    tinf: num(Q.tinf, d.tinf), on: true });
+      }
+      if (Q.dose2) {
+        list.push({ label: 'B', dose: num(Q.dose2, d.dose), tau: num(Q.tau2, d.tau),
+                    tinf: num(Q.tinf2, d.tinf), on: true });
+      }
+      if (Q.dose3) {
+        list.push({ label: 'C', dose: num(Q.dose3, d.dose), tau: num(Q.tau3, d.tau),
+                    tinf: num(Q.tinf3, d.tinf), on: true });
+      }
+      return list;
+    }
+    return [{ label: 'A', dose: d.dose, tau: d.tau, tinf: d.tinf, on: true }];
+  }
+
+  function regLabel(r) {
+    if (r.mode === 'ci') return (r.dose24 / 1000) + ' g/24 h CI';
+    return (r.dose >= 1000 ? (r.dose / 1000) + ' g' : r.dose + ' mg') +
+           ' q' + r.tau + 'h, ' + r.tinf + ' h inf';
+  }
+
+  function renderRegimens() {
+    var host = $('regimens');
+    if (!host) return;
+    host.innerHTML = '';
+    S.regimens.forEach(function (r, i) {
+      var d = document.createElement('div');
+      d.style.cssText = 'border-top:1px solid var(--line2);padding-top:8px;margin-top:8px';
+      if (i === 0) d.style.cssText = '';
+      var swatch = '<span style="display:inline-block;width:11px;height:11px;' +
+        'border-radius:3px;background:' + COLORS[i % 3] + ';vertical-align:middle"></span>';
+      d.innerHTML =
+        '<div class="inline" style="justify-content:space-between;margin-bottom:5px">' +
+          '<span style="font-size:.78rem;font-weight:600">' + swatch + ' ' + r.label + '</span>' +
+          '<span>' +
+            '<label class="inline" style="display:inline-flex;font-size:.72rem">' +
+              '<input type="checkbox" data-ci="' + i + '"' + (r.mode === 'ci' ? ' checked' : '') + '> CI</label>' +
+            (S.regimens.length > 1 ? ' <button class="mini" data-del="' + i + '">×</button>' : '') +
+          '</span>' +
+        '</div>' +
+        (r.mode === 'ci'
+          ? '<div class="row"><div><label>Daily dose (mg/24 h)</label>' +
+            '<input type="number" step="500" data-f="dose24" data-i="' + i + '" value="' + (r.dose24 || 16000) + '"></div></div>'
+          : '<div class="row r3">' +
+            '<div><label>Dose (mg)</label><input type="number" step="250" data-f="dose" data-i="' + i + '" value="' + r.dose + '"></div>' +
+            '<div><label>&tau; (h)</label><input type="number" step="1" data-f="tau" data-i="' + i + '" value="' + r.tau + '"></div>' +
+            '<div><label>Inf (h)</label><input type="number" step="0.25" data-f="tinf" data-i="' + i + '" value="' + r.tinf + '"></div>' +
+            '</div>');
+      host.appendChild(d);
+    });
+    host.querySelectorAll('input[data-f]').forEach(function (el) {
+      el.addEventListener('input', function () {
+        var i = +el.getAttribute('data-i'), f = el.getAttribute('data-f');
+        S.regimens[i][f] = parseFloat(el.value);
+        run();
+      });
+    });
+    host.querySelectorAll('input[data-ci]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var i = +el.getAttribute('data-ci'), r = S.regimens[i];
+        if (el.checked) {
+          r.mode = 'ci';
+          r.dose24 = r.dose && r.tau ? Math.round((r.dose * 24) / r.tau) : 16000;
+        } else {
+          delete r.mode;
+          var m = model().defaultRegimen;
+          r.dose = r.dose || m.dose; r.tau = r.tau || m.tau; r.tinf = r.tinf || m.tinf;
+        }
+        renderRegimens(); run();
+      });
+    });
+    host.querySelectorAll('button[data-del]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        S.regimens.splice(+el.getAttribute('data-del'), 1);
+        S.regimens.forEach(function (r, j) { r.label = 'ABC'.charAt(j); });
+        renderRegimens(); run();
+      });
+    });
+  }
+
+  /* ---------------- selectors ---------------- */
+  function drugs() {
+    var seen = [], out = [];
+    M.MODELS.forEach(function (m) {
+      if (seen.indexOf(m.drug) < 0) { seen.push(m.drug); out.push(m.drug); }
+    });
+    return out;
+  }
+
+  function fillSelectors() {
+    var dsel = $('drug');
+    if (dsel) {
+      dsel.innerHTML = drugs().map(function (d) {
+        return '<option value="' + d + '">' + d + '</option>';
+      }).join('');
+      dsel.value = model().drug;
+      dsel.onchange = function () {
+        var first = null;
+        M.MODELS.forEach(function (m) { if (m.drug === dsel.value && !first) first = m; });
+        S.modelId = first.id; S.targetId = null;
+        syncModel(true); run();
+      };
+    }
+    var msel = $('model');
+    if (msel) {
+      msel.innerHTML = M.MODELS.filter(function (m) { return m.drug === model().drug; })
+        .map(function (m) {
+          return '<option value="' + m.id + '">' + m.label + '</option>';
+        }).join('');
+      msel.value = S.modelId;
+      msel.onchange = function () {
+        S.modelId = msel.value; S.targetId = null; syncModel(true); run();
+      };
+    }
+    [['target', function (v) { S.targetId = v; }],
+     ['wTarget', function (v) { S.targetId = v; }]].forEach(function (pair) {
+      var el = $(pair[0]);
+      if (!el) return;
+      el.innerHTML = model().targets.map(function (t) {
+        return '<option value="' + t.id + '">' + t.label + '</option>';
+      }).join('');
+      el.value = target().id;
+      el.onchange = function () { pair[1](el.value); syncTargetSelects(); run(); };
+    });
+  }
+  function syncTargetSelects() {
+    ['target', 'wTarget'].forEach(function (id) {
+      var el = $(id); if (el) el.value = target().id;
+    });
+  }
+
+  /* Show only the covariate inputs the selected model actually uses —
+     entering a creatinine eGFR into a cystatin-C model is a real misuse. */
+  function syncModel(resetDefaults) {
+    var m = model();
+    if (resetDefaults) {
+      S.regimens = [{ label: 'A', dose: m.defaultRegimen.dose, tau: m.defaultRegimen.tau,
+                      tinf: m.defaultRegimen.tinf, on: true }];
+      if (m.defaultRegimen.mode === 'ci') S.regimens[0] = { label: 'A', mode: 'ci', dose24: 16000, on: true };
+      S.mic = m.defaultMic;
+    }
+    var usesCysC = m.renal === 'cysc';
+    if ($('scrBlock')) $('scrBlock').classList.toggle('hidden', usesCysC);
+    if ($('cyscBlock')) $('cyscBlock').classList.toggle('hidden', !usesCysC);
+    var has = function (k) { return m.covariates.indexOf(k) >= 0; };
+    if ($('ecmoBlock')) $('ecmoBlock').classList.toggle('hidden', !has('ecmo'));
+    if ($('rrtBlock')) $('rrtBlock').classList.toggle('hidden', !has('rrt'));
+    if ($('dialysisBlock')) $('dialysisBlock').classList.toggle('hidden', !has('dialysis'));
+    if ($('rdBlock')) $('rdBlock').classList.toggle('hidden', !has('rd'));
+    // Weight only moves this model's renal estimate, never its volumes.
+    if ($('wt')) {
+      $('wt').title = (m.id === 'mem_shekar2014')
+        ? 'Affects CLcr only: this model applies no weight scaling to volumes.'
+        : '';
+    }
+    if ($('modelCite')) {
+      $('modelCite').innerHTML = m.source +
+        ' &nbsp;<a href="https://doi.org/' + m.doi + '" target="_blank" rel="noopener">doi</a>' +
+        '<br>Fitted to <b>' + m.matrix + '</b>' +
+        (m.fu !== 1 ? ', free fraction ' + m.fu : '') + '.';
+    }
+    if ($('modelNote')) {
+      var n = '';
+      if (m.note) n += '<div class="note">' + m.note + '</div>';
+      if (m.bayesian === false) n += '<div class="note">' + m.bayesianNote + '</div>';
+      $('modelNote').innerHTML = n;
+    }
+    if ($('panelTdm')) $('panelTdm').classList.toggle('hidden', m.bayesian === false);
+    fillSelectors();
+    renderRegimens();
+    if ($('mic')) $('mic').value = S.mic;
+    if ($('wMic')) $('wMic').value = S.mic;
+    var wl = $('wRenalLab');
+    if (wl) wl.textContent = usesCysC ? 'eGFR (cystatin C)' : 'CLcr (mL/min)';
+    var wr = $('wRenal');
+    if (wr) {
+      var r = renalOf(m);
+      wr.value = Math.round(r.crcl != null ? r.crcl : r.egfr);
+    }
+  }
+
+  /* ---------------- rendering ---------------- */
+  var LAST = null;
+
+  function run() {
+    var m = modelResolved(), cov = covFull(), t = target(),
+        mics = M.LADDER, results = [];
+
+    S.regimens.forEach(function (r, i) {
+      var reg = r.mode === 'ci'
+        ? { mode: 'ci', dose24: r.dose24, duration: 24 * 5 }
+        : { dose: r.dose, tau: r.tau, tinf: r.tinf };
+      var res = P.simulate({
+        model: m, cov: cov, regimen: reg, target: t, mics: mics,
+        mic: S.mic, n: S.n, seed: S.seed, nT: 140, nGrid: 260
+      });
+      res.color = COLORS[i % 3];
+      res.label = regLabel(r);
+      results.push(res);
+    });
+    LAST = { results: results, model: m, target: t, cov: cov };
+    drawPta(results, t);
+    drawConc(results, t);
+    drawSummary(results, t);
+    drawCfr(results);
+    drawRenal();
+  }
+
+  function drawPta(results, t) {
+    var cv = $('cvPta'); if (!cv) return;
+    var pl = new Plot(cv, { xlog: true });
+    var mics = M.LADDER;
+    pl.setScale(mics[0], mics[mics.length - 1], 0, 100);
+    var xt = mics.map(function (v) {
+      return { v: v, l: v < 1 ? String(v) : String(v) };
+    });
+    pl.axes('MIC (mg/L)', 'PTA (%)', xt, niceTicks(0, 100, 5));
+    pl.hline(S.ptaThresh, '#9aa3ab', 1.5, [5, 4]);
+    pl.text(S.ptaThresh + '%', pl.W - pl.pad.r - 3, pl.py(S.ptaThresh) - 9, '#7c858e', 'right');
+    results.forEach(function (r) {
+      pl.line(r.pta.map(function (p) { return p.mic; }),
+              r.pta.map(function (p) { return p.pta; }), r.color, WIDGET ? 3 : 2.4);
+    });
+    var leg = $('legPta');
+    if (leg) {
+      leg.innerHTML = results.map(function (r) {
+        var bp = P.pkpdBreakpoint(r.pta, S.ptaThresh);
+        return '<span><i style="background:' + r.color + '"></i>' + r.label +
+               ' &mdash; breakpoint ' + (bp == null ? '&lt;' + M.LADDER[0] : bp) + ' mg/L</span>';
+      }).join('') +
+      '<span style="color:var(--ink3)">' + t.label + ' &middot; n=' + S.n + '</span>';
+    }
+  }
+
+  function drawConc(results, t) {
+    var cv = $('cvConc'); if (!cv) return;
+    var pl = new Plot(cv, { ylog: S.logy });
+    var r0 = results[0],
+        tspan = r0.tB - r0.tA,
+        ymax = 0;
+    results.forEach(function (r) {
+      r.hi.forEach(function (v) { if (v > ymax) ymax = v; });
+    });
+    var micLine = S.mic * (t.micMultiplier || 1);
+    ymax = Math.max(ymax, micLine * 1.25);
+    var ymin = S.logy ? Math.max(0.05, micLine / 50) : 0;
+    pl.setScale(0, tspan, ymin, ymax * 1.06);
+    var yt = S.logy
+      ? [0.1, 1, 10, 100, 1000].filter(function (v) { return v >= ymin && v <= ymax * 1.06; })
+          .map(function (v) { return { v: v, l: String(v) }; })
+      : niceTicks(0, ymax * 1.06, 5);
+    pl.axes('Time within dosing interval at steady state (h)',
+            'Concentration (mg/L)', niceTicks(0, tspan, 6), yt);
+
+    results.forEach(function (r) {
+      var xs = r.times.map(function (x) { return x - r.tA; });
+      if (results.length === 1) {
+        pl.band(xs, r.lo.map(function (v) { return Math.max(ymin, v); }), r.hi,
+                'rgba(0,114,178,.16)');
+      }
+      pl.line(xs, r.median.map(function (v) { return Math.max(ymin, v); }),
+              r.color, WIDGET ? 3 : 2.4);
+    });
+    // MIC (or 4xMIC) reference line
+    if (micLine > 0) {
+      pl.hline(micLine, MICCOL, 1.8, [6, 4]);
+      pl.text((t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC ' +
+              micLine + ' mg/L', pl.pad.l + 5, pl.py(micLine) - 9, MICCOL, 'left', true);
+    }
+    // Bayesian individual overlay
+    if (LASTMAP && LASTMAP.curve && results.length === 1) {
+      pl.line(LASTMAP.curve.t, LASTMAP.curve.c.map(function (v) { return Math.max(ymin, v); }),
+              BAYESCOL, 2.4);
+    }
+    var leg = $('legConc');
+    if (leg) {
+      leg.innerHTML =
+        results.map(function (r) {
+          return '<span><i style="background:' + r.color + '"></i>' + r.label + ' (median)</span>';
+        }).join('') +
+        (results.length === 1
+          ? '<span><i class="sw-band" style="background:rgba(0,114,178,.16)"></i>90% prediction interval</span>'
+          : '') +
+        '<span><i style="background:' + MICCOL + '"></i>' +
+          (t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC</span>';
+    }
+  }
+
+  function fmt(x, d) {
+    if (x == null || !isFinite(x)) return '—';
+    return x.toFixed(d == null ? 1 : d);
+  }
+
+  function drawSummary(results, t) {
+    var host = $('summary'); if (!host) return;
+    var m = model();
+    var rows = results.map(function (r) {
+      var e = r.exposure,
+          pta = r.ptaAtRefMic,
+          cls = pta >= S.ptaThresh ? 'ok' : 'bad';
+      return '<tr>' +
+        '<td><span style="display:inline-block;width:9px;height:9px;border-radius:2px;' +
+          'background:' + r.color + '"></span> ' + r.label + '</td>' +
+        '<td class="num"><b>' + fmt(pta) + '%</b> <span class="pill ' + cls + '">' +
+          (pta >= S.ptaThresh ? 'attained' : 'not attained') + '</span></td>' +
+        '<td class="num">' + fmt(e.tAbove.median) + ' (' + fmt(e.tAbove.p5, 0) + '–' + fmt(e.tAbove.p95, 0) + ')</td>' +
+        '<td class="num">' + fmt(e.auc24.median, 0) + ' (' + fmt(e.auc24.p5, 0) + '–' + fmt(e.auc24.p95, 0) + ')</td>' +
+        '<td class="num">' + fmt(e.cmax.median) + '</td>' +
+        '<td class="num">' + fmt(e.cmin.median, 2) + '</td>' +
+        '<td class="num">' + (P.pkpdBreakpoint(r.pta, S.ptaThresh) == null
+            ? '&lt;' + M.LADDER[0] : P.pkpdBreakpoint(r.pta, S.ptaThresh)) + '</td>' +
+        '</tr>';
+    }).join('');
+    host.innerHTML =
+      '<div class="big">' + fmt(results[0].ptaAtRefMic) + '%<small> PTA &middot; ' +
+        t.label + ' at MIC ' + S.mic + ' mg/L &middot; ' + results[0].label + '</small></div>' +
+      '<table style="margin-top:10px"><thead><tr>' +
+        '<th>Regimen</th><th class="num">PTA at MIC ' + S.mic + '</th>' +
+        '<th class="num">%fT&gt;MIC med (90% PI)</th>' +
+        '<th class="num">AUC₀₋₂₄ med (90% PI)</th>' +
+        '<th class="num">Cmax</th><th class="num">Cmin</th>' +
+        '<th class="num">Breakpoint</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<p class="cite" style="margin:8px 0 0">Exposure metrics are computed over the ' +
+        'steady-state dosing interval. AUC and Cmax/Cmin are total drug; %fT&gt;MIC uses ' +
+        'free drug (fu = ' + m.fu + '). Breakpoint = highest ladder MIC with PTA ≥ ' +
+        S.ptaThresh + '%.</p>';
+  }
+
+  function parseMicDist() {
+    var el = $('micDist');
+    if (!el || !el.value.trim()) return null;
+    var out = [];
+    el.value.split(/[\n;]+/).forEach(function (ln) {
+      var p = ln.split(/[,\t ]+/).filter(function (x) { return x !== ''; });
+      if (p.length >= 2) {
+        var mic = parseFloat(p[0]), f = parseFloat(p[1]);
+        if (isFinite(mic) && isFinite(f)) out.push({ mic: mic, freq: f });
+      }
+    });
+    return out.length ? out : null;
+  }
+
+  function drawCfr(results) {
+    var host = $('cfrOut'); if (!host) return;
+    var dist = parseMicDist();
+    if (!dist) { host.innerHTML = ''; return; }
+    var onLadder = dist.filter(function (d) {
+      return M.LADDER.some(function (v) { return Math.abs(v - d.mic) < 1e-9; });
+    });
+    var html = results.map(function (r) {
+      var v = P.cfr(r.pta, dist);
+      return '<div class="kv"><span>' + r.label + '</span><span>' + fmt(v) + '%</span></div>';
+    }).join('');
+    host.innerHTML = '<div style="margin-top:8px"><b style="font-size:.75rem">CFR</b>' + html +
+      (onLadder.length < dist.length
+        ? '<div class="note">' + (dist.length - onLadder.length) + ' MIC value(s) are not on the ' +
+          'simulated ladder (' + M.LADDER.join(', ') + ' mg/L) and were ignored.</div>'
+        : '') + '</div>';
+  }
+
+  function drawRenal() {
+    var host = $('renalOut'); if (!host) return;
+    var m = model(), r = renalOf(m),
+        lab = RENAL_LABEL[r.kind] || 'Renal function',
+        rows = r.crcl != null
+          ? '<div class="kv"><span>' + lab + '</span><span>' +
+            fmt(r.crcl) + ' mL/min</span></div>'
+          : '<div class="kv"><span>' + lab + '</span><span>' +
+            fmt(r.egfr) + (r.kind === 'mdrd' ? ' mL/min' : ' mL/min/1.73m²') +
+            '</span></div>';
+    // The clearance a model actually uses is worth showing next to the
+    // renal estimate, because several of these models are step functions
+    // of dialysis modality rather than smooth functions of GFR.
+    var pr = modelResolved().params(covFull());
+    rows += '<div class="kv"><span>Typical CL</span><span>' +
+            fmt(pr.CL) + ' L/h</span></div>';
+    host.innerHTML = rows;
+  }
+
+  /* ---------------- Bayesian forecasting ---------------- */
+  var LASTMAP = null;
+  var tdmSamples = [{ time: '', conc: '' }];
+
+  function renderTdm() {
+    var tb = $('tdmRows'); if (!tb) return;
+    tb.innerHTML = tdmSamples.map(function (s, i) {
+      return '<tr>' +
+        '<td><input type="number" step="0.1" data-t="' + i + '" value="' + s.time + '" style="width:100%"></td>' +
+        '<td><input type="number" step="0.1" data-c="' + i + '" value="' + s.conc + '" style="width:100%"></td>' +
+        '<td><button class="mini" data-x="' + i + '">×</button></td></tr>';
+    }).join('');
+    tb.querySelectorAll('input[data-t]').forEach(function (el) {
+      el.oninput = function () { tdmSamples[+el.getAttribute('data-t')].time = el.value; };
+    });
+    tb.querySelectorAll('input[data-c]').forEach(function (el) {
+      el.oninput = function () { tdmSamples[+el.getAttribute('data-c')].conc = el.value; };
+    });
+    tb.querySelectorAll('button[data-x]').forEach(function (el) {
+      el.onclick = function () {
+        tdmSamples.splice(+el.getAttribute('data-x'), 1);
+        if (!tdmSamples.length) tdmSamples.push({ time: '', conc: '' });
+        renderTdm();
+      };
+    });
+  }
+
+  function runMap() {
+    var m = modelResolved(), cov = covFull(), out = $('mapOut');
+    if (m.bayesian === false) { out.innerHTML = '<div class="note">' + m.bayesianNote + '</div>'; return; }
+    var samples = tdmSamples.map(function (s) {
+      return { time: parseFloat(s.time), conc: parseFloat(s.conc) };
+    }).filter(function (s) { return isFinite(s.time) && isFinite(s.conc); });
+    if (samples.length < 1) {
+      out.innerHTML = '<div class="note">Enter at least one time–concentration pair.</div>';
+      return;
+    }
+    var reg = { dose: num($('tdmDose').value, 1000), tau: num($('tdmTau').value, 12),
+                tinf: num($('tdmTinf').value, 1), nDoses: Math.max(1, num($('tdmN').value, 4)) };
+    var sched = P.buildSchedule(reg);
+    var fit = P.mapEstimate(m, cov, sched.events, samples);
+
+    // Individual profile for the overlay and for exposure metrics.
+    var tEnd = sched.tEnd + reg.tau, ts = [], cs = [], i;
+    for (i = 0; i <= 300; i++) { var tt = (i * tEnd) / 300; ts.push(tt); cs.push(fit.predict(tt)); }
+    // Overlay is drawn on the steady-state-interval axis of the main plot.
+    var r0 = LAST && LAST.results[0];
+    if (r0) {
+      var ots = [], ocs = [], tau = r0.tB - r0.tA, base = sched.tEnd - reg.tau;
+      for (i = 0; i <= 140; i++) {
+        var u = (i * tau) / 140;
+        ots.push(u); ocs.push(fit.predict(base + u));
+      }
+      LASTMAP = { fit: fit, curve: { t: ots, c: ocs } };
+    }
+
+    var t = target(),
+        cfInd = fit.predict,
+        mInd = P.metrics(cfInd, sched.tEnd - reg.tau, sched.tEnd,
+                         { fu: m.fu, mic: S.mic * (t.micMultiplier || 1), nGrid: 800 });
+    var hit = P.meetsTarget(mInd, t, S.mic);
+
+    // Smallest dose (same tau/tinf, 250 mg steps) meeting the target for
+    // this individual — the dose-adjustment question TDM is asked for.
+    var rec = null;
+    for (var d = 250; d <= 12000; d += 250) {
+      var rr = { dose: d, tau: reg.tau, tinf: reg.tinf,
+                 nDoses: P.dosesToSteadyState(fit.params, m.ncmt, reg.tau) };
+      var sc = P.buildSchedule(rr), cf2 = P.concFn(fit.params, m.ncmt, sc);
+      var mm = P.metrics(cf2, sc.tEnd - reg.tau, sc.tEnd,
+                         { fu: m.fu, mic: S.mic * (t.micMultiplier || 1), nGrid: 400 });
+      if (P.meetsTarget(mm, t, S.mic)) { rec = { dose: d, metrics: mm }; break; }
+    }
+
+    var keys = fit.keys;
+    out.innerHTML =
+      '<div class="grid2">' +
+      '<div><table><thead><tr><th>Parameter</th><th class="num">Population</th>' +
+        '<th class="num">Individual (MAP)</th><th class="num">η</th></tr></thead><tbody>' +
+        keys.map(function (k, i2) {
+          return '<tr><td>' + k + '</td><td class="num">' + fmt(fit.typicalParams[k], 2) +
+            '</td><td class="num"><b>' + fmt(fit.params[k], 2) + '</b></td>' +
+            '<td class="num">' + fmt(fit.etas[i2], 2) + '</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<table style="margin-top:8px"><thead><tr><th>Sample</th><th class="num">Observed</th>' +
+        '<th class="num">MAP predicted</th></tr></thead><tbody>' +
+        fit.fitted.map(function (f, i3) {
+          return '<tr><td>t = ' + fmt(f.time, 1) + ' h</td><td class="num">' + fmt(f.obs, 2) +
+            '</td><td class="num">' + fmt(f.pred, 2) + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+      '<div>' +
+        '<div class="kv"><span>Individual ' + t.label + '</span><span>' +
+          (t.type === 'auc' ? fmt(mInd.auc24, 0) + ' mg·h/L'
+            : t.type === 'cmin' ? fmt(mInd.cmin, 2) + ' mg/L'
+            : fmt(mInd.tAbove) + '%') +
+          ' <span class="pill ' + (hit ? 'ok' : 'bad') + '">' +
+          (hit ? 'target met' : 'target missed') + '</span></span></div>' +
+        '<div class="kv"><span>Individual AUC₀₋₂₄</span><span>' + fmt(mInd.auc24, 0) + ' mg·h/L</span></div>' +
+        '<div class="kv"><span>Individual Cmin</span><span>' + fmt(mInd.cmin, 2) + ' mg/L</span></div>' +
+        '<div class="kv"><span>Individual Cmax</span><span>' + fmt(mInd.cmax, 1) + ' mg/L</span></div>' +
+        '<div style="margin-top:10px">' +
+          (rec
+            ? '<b style="font-size:.8rem">Smallest dose meeting ' + t.label + '</b>' +
+              '<div class="big" style="font-size:1.4rem">' + rec.dose + ' mg q' + reg.tau + 'h' +
+              '<small> (' + reg.tinf + ' h infusion, this individual)</small></div>'
+            : '<div class="note">No dose up to 12 g per interval met the target for this ' +
+              'individual at the current interval and infusion duration.</div>') +
+        '</div>' +
+        '<p class="cite">MAP estimate maximises the posterior combining these samples with ' +
+        'the model prior (ω) and residual error (additive ' + (m.err.add || 0) + ' mg/L, ' +
+        'proportional ' + Math.round((m.err.prop || 0) * 100) + '%). Sparse samples shrink ' +
+        'toward the population value — that is the intended behaviour, not a fitting failure.</p>' +
+      '</div></div>';
+    drawConc(LAST.results, t);
+  }
+
+  /* ---------------- embed URL builder ---------------- */
+  function buildEmbed() {
+    var r = S.regimens[0], p = ['mode=widget', 'model=' + S.modelId,
+      'target=' + target().id, 'mic=' + S.mic, 'n=' + S.n, 'seed=' + S.seed,
+      'pta=' + S.ptaThresh];
+    if (r.mode === 'ci') { p.push('ci=1'); p.push('dose24=' + r.dose24); }
+    else { p.push('dose=' + r.dose, 'tau=' + r.tau, 'tinf=' + r.tinf); }
+    if (S.regimens[1]) {
+      var b = S.regimens[1];
+      if (!b.mode) p.push('dose2=' + b.dose, 'tau2=' + b.tau, 'tinf2=' + b.tinf);
+    }
+    if (S.regimens[2]) {
+      var c = S.regimens[2];
+      if (!c.mode) p.push('dose3=' + c.dose, 'tau3=' + c.tau, 'tinf3=' + c.tinf);
+    }
+    ['wt', 'age', 'sex', 'scr', 'scrUnit', 'cysc', 'ht', 'rd'].forEach(function (k) {
+      if (S.cov[k] != null && S.cov[k] !== '') p.push(k + '=' + encodeURIComponent(S.cov[k]));
+    });
+    if (S.cov.ecmo) p.push('ecmo=1');
+    if (S.cov.rrt) p.push('rrt=1');
+    if (S.cov.dialysis && S.cov.dialysis !== 'none') p.push('dialysis=' + S.cov.dialysis);
+    if (S.logy) p.push('logy=1');
+    var file = window.location.pathname.split('/').pop() || 'mipd-lab.html';
+    var url = file + '?' + p.join('&');
+    var ta = $('embedOut');
+    ta.style.display = 'block';
+    ta.value = '<iframe src="' + url + '" width="100%" height="560" ' +
+               'style="border:0" loading="lazy"></iframe>';
+    ta.select();
+  }
+
+  /* ---------------- init ---------------- */
+  function bindCov() {
+    var map = [['wt', 'wt', 'num'], ['age', 'age', 'num'], ['ht', 'ht', 'num'],
+               ['scr', 'scr', 'num'], ['cysc', 'cysc', 'num'], ['rd', 'rd', 'num'],
+               ['sex', 'sex', 'str'], ['scrUnit', 'scrUnit', 'str'],
+               ['dialysis', 'dialysis', 'str']];
+    map.forEach(function (m2) {
+      var el = $(m2[0]); if (!el) return;
+      el.value = S.cov[m2[1]];
+      el.addEventListener('input', function () {
+        S.cov[m2[1]] = m2[2] === 'num' ? parseFloat(el.value) : el.value;
+        syncWidgetRenal(); run();
+      });
+      el.addEventListener('change', function () {
+        S.cov[m2[1]] = m2[2] === 'num' ? parseFloat(el.value) : el.value;
+        syncWidgetRenal(); run();
+      });
+    });
+    var ec = $('ecmo');
+    if (ec) {
+      ec.checked = !!S.cov.ecmo;
+      ec.onchange = function () { S.cov.ecmo = ec.checked; syncModel(false); run(); };
+    }
+    var rr = $('rrt');
+    if (rr) {
+      rr.checked = !!S.cov.rrt;
+      rr.onchange = function () { S.cov.rrt = rr.checked; syncModel(false); run(); };
+    }
+  }
+  function syncWidgetRenal() {
+    var wr = $('wRenal'); if (!wr) return;
+    var r = renalOf(model());
+    wr.value = Math.round(r.crcl != null ? r.crcl : r.egfr);
+  }
+
+  /* In widget mode the renal input is the covariate itself: back-solve
+     serum creatinine (or cystatin C) so the model sees the value shown. */
+  function setRenalDirect(v) {
+    var m = model(), c = S.cov, lo, hi, i, mid;
+    if (m.renal === 'cysc') {
+      // Invert CKD-EPI cystatin C for cystatin C.
+      lo = 0.2; hi = 8;
+      for (i = 0; i < 60; i++) {
+        mid = (lo + hi) / 2;
+        if (P.ckdEpiCysC({ cysc: mid, age: c.age, sex: c.sex }) > v) lo = mid;
+        else hi = mid;
+      }
+      c.cysc = (lo + hi) / 2;
+      return;
+    }
+    if (m.renal === 'ckdepi' || m.renal === 'mdrd') {
+      // Both are decreasing in creatinine, so bisect on SCr in mg/dL.
+      var f = (m.renal === 'ckdepi')
+        ? function (s) { return P.ckdEpiCr({ scr: s, scrUnit: 'mg/dL', age: c.age, sex: c.sex }); }
+        : function (s) { return P.mdrd({ scr: s, scrUnit: 'mg/dL', age: c.age, sex: c.sex }); };
+      lo = 0.1; hi = 25;
+      for (i = 0; i < 80; i++) {
+        mid = (lo + hi) / 2;
+        if (f(mid) > v) lo = mid; else hi = mid;
+      }
+      c.scrUnit = 'mg/dL'; c.scr = (lo + hi) / 2;
+      return;
+    }
+    // Cockcroft-Gault inverts in closed form.
+    var g = c.sex === 'F' ? 0.85 : 1;
+    c.scrUnit = 'mg/dL';
+    c.scr = ((140 - c.age) * c.wt * g) / (72 * v);
+  }
+
+  function bindWidget() {
+    var pairs = [['wDose', function (v) {
+        var r = S.regimens[0];
+        if (r.mode === 'ci') r.dose24 = v; else r.dose = v;
+      }],
+      ['wTau', function (v) { S.regimens[0].tau = v; }],
+      ['wTinf', function (v) { S.regimens[0].tinf = v; }],
+      ['wMic', function (v) { S.mic = v; }],
+      ['wRenal', function (v) { setRenalDirect(v); }]];
+    pairs.forEach(function (p) {
+      var el = $(p[0]); if (!el) return;
+      el.addEventListener('input', function () {
+        var v = parseFloat(el.value);
+        if (isFinite(v)) { p[1](v); run(); }
+      });
+    });
+    var r = S.regimens[0];
+    if ($('wDose')) $('wDose').value = r.mode === 'ci' ? r.dose24 : r.dose;
+    if ($('wTau')) $('wTau').value = r.tau || '';
+    if ($('wTinf')) $('wTinf').value = r.tinf || '';
+    if (r.mode === 'ci') {
+      ['wTau', 'wTinf'].forEach(function (id) {
+        var e = $(id); if (e) e.parentNode.style.display = 'none';
+      });
+    }
+  }
+
+  function renderPending() {
+    var host = $('pendingList'); if (!host) return;
+    host.innerHTML = M.PENDING.map(function (p) {
+      return '<div style="margin-bottom:7px"><b>' + p.drug + ' — ' + p.label + '</b><br>' +
+        p.reason + ' <a href="https://doi.org/' + p.doi + '" target="_blank" rel="noopener">doi</a></div>';
+    }).join('');
+  }
+
+  function init() {
+    if (WIDGET) document.body.classList.add('widget');
+    var m0 = null;
+    M.MODELS.forEach(function (x) { if (x.id === S.modelId) m0 = x; });
+    if (!m0) { S.modelId = M.MODELS[0].id; m0 = M.MODELS[0]; }
+
+    S.cov = {
+      wt: num(Q.wt, 80), age: num(Q.age, 60), ht: num(Q.ht, 172),
+      sex: Q.sex === 'F' ? 'F' : 'M',
+      scr: num(Q.scr, 1.0), scrUnit: Q.scrUnit === 'umol/L' ? 'umol/L' : 'mg/dL',
+      cysc: num(Q.cysc, 1.0), ecmo: bool(Q.ecmo, false),
+      rrt: bool(Q.rrt, false),
+      dialysis: (['none', 'cont', 'semicont'].indexOf(Q.dialysis) >= 0
+                 ? Q.dialysis : 'none'),
+      // 845 mL/24 h is the population median residual diuresis in the
+      // O'Jeanson cohort, which is the value its typical clearance is
+      // centred on, so it is the neutral default.
+      rd: num(Q.rd, 845)
+    };
+    S.mic = num(Q.mic, m0.defaultMic);
+    S.regimens = defaultRegimens();
+    if (Q.crcl) setRenalDirect(num(Q.crcl, 80));
+    if (Q.egfr) setRenalDirect(num(Q.egfr, 80));
+
+    syncModel(false);
+    bindCov();
+    bindWidget();
+    renderPending();
+    renderTdm();
+
+    [['mic', function (v) { S.mic = v; var w = $('wMic'); if (w) w.value = v; }],
+     ['ptaThresh', function (v) { S.ptaThresh = v; }],
+     ['nsim', function (v) { S.n = Math.max(50, Math.min(20000, v)); }],
+     ['seed', function (v) { S.seed = v; }]].forEach(function (p) {
+      var el = $(p[0]); if (!el) return;
+      el.addEventListener('input', function () {
+        var v = parseFloat(el.value);
+        if (isFinite(v)) { p[1](v); run(); }
+      });
+    });
+    if ($('mic')) $('mic').value = S.mic;
+    var ly = $('logy');
+    if (ly) { ly.checked = S.logy; ly.onchange = function () { S.logy = ly.checked; run(); }; }
+    var md = $('micDist');
+    if (md) md.addEventListener('input', function () { drawCfr(LAST.results); });
+    if ($('addReg')) $('addReg').onclick = function () {
+      if (S.regimens.length >= 3) return;
+      var d = model().defaultRegimen;
+      S.regimens.push({ label: 'ABC'.charAt(S.regimens.length),
+                        dose: d.dose, tau: d.tau, tinf: d.tinf, on: true });
+      renderRegimens(); run();
+    };
+    if ($('addTdm')) $('addTdm').onclick = function () {
+      tdmSamples.push({ time: '', conc: '' }); renderTdm();
+    };
+    if ($('runMap')) $('runMap').onclick = runMap;
+    if ($('mkEmbed')) $('mkEmbed').onclick = buildEmbed;
+    var dr = model().defaultRegimen;
+    if ($('tdmDose')) $('tdmDose').value = dr.dose;
+    if ($('tdmTau')) $('tdmTau').value = dr.tau;
+    if ($('tdmTinf')) $('tdmTinf').value = dr.tinf;
+
+    if (Q.title) $('title').textContent = Q.title;
+    else $('title').textContent = model().drug + ' — target attainment';
+    $('subtitle').innerHTML = model().label + ' &middot; ' +
+      'Monte Carlo, n = ' + S.n + ', seed ' + S.seed;
+    $('footer').innerHTML = 'Simulation for teaching and exploratory PK/PD analysis. ' +
+      'Not a medical device and not a substitute for clinical judgement or local ' +
+      'dosing policy; individual dosing decisions require a qualified clinician with ' +
+      'the full patient context.';
+
+    if (WIDGET) {
+      var panel = Q.panel || 'both';
+      if (panel === 'pta' || panel === 'conc') {
+        var keep = panel === 'pta' ? 0 : 1,
+            kids = $('panelPta').querySelectorAll('.grid2 > div');
+        kids[1 - keep].style.display = 'none';
+        $('panelPta').querySelector('.grid2').style.gridTemplateColumns = '1fr';
+      }
+      if (bool(Q.summary, true) === false) $('panelSummary').classList.add('hidden');
+      if (bool(Q.controls, true) === false) $('wstripCard').classList.add('hidden');
+    }
+
+    run();
+    window.addEventListener('resize', function () { if (LAST) run(); });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else init();
+})();

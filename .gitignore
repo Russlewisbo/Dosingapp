@@ -1,0 +1,27 @@
+# --- local tooling, caches, virtualenvs (build-environment detritus) ---
+node_modules/
+package.json
+package-lock.json
+.venv/
+.tmp/
+.cache/
+.quarto/
+
+# --- rendered Quarto output: regenerate with `quarto render slides-demo.qmd` ---
+slides-demo.html
+slides-demo_files/
+
+# --- fetched source papers: copyrighted, not redistributable ---
+articles/
+*.pdf
+
+# --- scratch ---
+_view_*.png
+param_pages.txt
+params_raw.txt
+scratch.cjs
+probe.cjs
+handoff/
+
+# transfer bundle of this repo (regenerate: git bundle create mipd-lab.bundle --all)
+*.bundle

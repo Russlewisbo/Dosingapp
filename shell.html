@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIPD Lab — population PK/PD target attainment</title>
+<style>
+:root{
+  --ink:#15181c; --ink2:#4a5158; --ink3:#7c858e;
+  --line:#d9dee3; --line2:#eef1f4; --bg:#ffffff; --panel:#f7f9fa;
+  /* Okabe-Ito, colour-vision-deficiency safe */
+  --c1:#0072B2; --c2:#E69F00; --c3:#009E73;
+  --mic:#D55E00; --bayes:#CC79A7; --band:rgba(0,114,178,.16);
+  --ok:#1a7f4b; --bad:#b4232a;
+  --fs:14px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font:var(--fs)/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+       "Helvetica Neue",Arial,sans-serif;
+  color:var(--ink); background:var(--bg);
+  -webkit-font-smoothing:antialiased;
+}
+h1{font-size:1.15rem;margin:0 0 2px;letter-spacing:-.01em}
+h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.07em;
+   color:var(--ink3);margin:0 0 8px;font-weight:600}
+a{color:var(--c1)}
+.sub{color:var(--ink2);font-size:.82rem;margin:0}
+
+/* ---------- layout ---------- */
+#wrap{display:grid;grid-template-columns:300px minmax(0,1fr);
+      gap:0;min-height:100vh}
+#side{border-right:1px solid var(--line);background:var(--panel);
+      padding:16px;overflow-y:auto}
+#main{padding:16px 20px;min-width:0}
+header{border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:14px}
+
+.card{background:var(--bg);border:1px solid var(--line);border-radius:8px;
+      padding:12px;margin-bottom:12px}
+#side .card{background:var(--bg)}
+
+/* ---------- form controls ---------- */
+label{display:block;font-size:.74rem;font-weight:600;color:var(--ink2);
+      margin-bottom:3px;letter-spacing:.01em}
+select,input[type=number],input[type=text]{
+  width:100%;padding:5px 7px;font:inherit;font-size:.85rem;color:var(--ink);
+  background:var(--bg);border:1px solid var(--line);border-radius:5px}
+select:focus,input:focus{outline:2px solid rgba(0,114,178,.35);outline-offset:-1px}
+.row{display:grid;gap:8px;margin-bottom:9px}
+.r2{grid-template-columns:1fr 1fr}
+.r3{grid-template-columns:1fr 1fr 1fr}
+.r4{grid-template-columns:1fr 1fr 1fr 1fr}
+.inline{display:flex;align-items:center;gap:6px}
+.inline input[type=checkbox]{width:auto;margin:0}
+.inline label{margin:0;font-weight:500}
+button{font:inherit;font-size:.82rem;padding:6px 11px;border-radius:5px;
+       border:1px solid var(--line);background:var(--bg);color:var(--ink);
+       cursor:pointer;font-weight:500}
+button:hover{background:var(--line2)}
+button.primary{background:var(--c1);border-color:var(--c1);color:#fff}
+button.primary:hover{filter:brightness(1.08)}
+button.mini{padding:3px 7px;font-size:.74rem}
+
+/* ---------- readouts ---------- */
+.kv{display:flex;justify-content:space-between;gap:10px;
+    padding:3px 0;border-bottom:1px dotted var(--line);font-size:.83rem}
+.kv:last-child{border-bottom:0}
+.kv span:first-child{color:var(--ink2)}
+.kv span:last-child{font-variant-numeric:tabular-nums;font-weight:600}
+.big{font-size:1.9rem;font-weight:650;font-variant-numeric:tabular-nums;
+     line-height:1.1;letter-spacing:-.02em}
+.big small{font-size:.8rem;font-weight:500;color:var(--ink3)}
+.pill{display:inline-block;padding:1px 7px;border-radius:99px;
+      font-size:.7rem;font-weight:600;letter-spacing:.02em}
+.pill.ok{background:#e4f4ea;color:var(--ok)}
+.pill.bad{background:#fdeaea;color:var(--bad)}
+.note{font-size:.75rem;color:var(--ink2);background:#fffbeb;
+      border-left:3px solid var(--c2);padding:7px 9px;border-radius:0 4px 4px 0;
+      margin:8px 0}
+.cite{font-size:.72rem;color:var(--ink3);line-height:1.4}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line2)}
+th{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;
+   color:var(--ink3);font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* ---------- plots ---------- */
+.plot{width:100%;display:block}
+.plotbox{position:relative;margin-bottom:6px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.76rem;
+        color:var(--ink2);margin:2px 0 10px}
+.legend i{display:inline-block;width:16px;height:3px;border-radius:2px;
+          vertical-align:middle;margin-right:5px}
+.legend .sw-band{height:11px;border-radius:2px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:1080px){.grid2{grid-template-columns:1fr}}
+
+/* ---------- widget mode ---------- */
+body.widget #side{display:none}
+body.widget #wrap{grid-template-columns:minmax(0,1fr)}
+body.widget{--fs:16px}
+body.widget #main{padding:10px 12px}
+body.widget header{padding-bottom:6px;margin-bottom:8px}
+body.widget h1{font-size:1.05rem}
+body.widget .card{padding:9px;margin-bottom:8px}
+body.widget .big{font-size:2.5rem}
+body.widget .wstrip{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+body.widget .wstrip > div{min-width:78px}
+body:not(.widget) .wstrip-only{display:none}
+body.widget .full-only{display:none}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <!-- ============ SIDEBAR (full mode) ============ -->
+  <aside id="side">
+    <div class="card">
+      <h2>Model</h2>
+      <div class="row"><div>
+        <label for="drug">Drug</label>
+        <select id="drug"></select>
+      </div></div>
+      <div class="row"><div>
+        <label for="model">Population PK model</label>
+        <select id="model"></select>
+      </div></div>
+      <div id="modelCite" class="cite"></div>
+      <div id="modelNote"></div>
+    </div>
+
+    <div class="card">
+      <h2>Patient</h2>
+      <div class="row r2">
+        <div><label for="wt">Weight (kg)</label><input id="wt" type="number" step="0.5"></div>
+        <div><label for="age">Age (y)</label><input id="age" type="number" step="1"></div>
+      </div>
+      <div class="row r2">
+        <div><label for="sex">Sex</label>
+          <select id="sex"><option value="M">Male</option><option value="F">Female</option></select>
+        </div>
+        <div><label for="ht">Height (cm)</label><input id="ht" type="number" step="1"></div>
+      </div>
+      <div id="scrBlock" class="row r2">
+        <div><label for="scr">Serum creatinine</label><input id="scr" type="number" step="0.01"></div>
+        <div><label for="scrUnit">Units</label>
+          <select id="scrUnit"><option value="mg/dL">mg/dL</option><option value="umol/L">µmol/L</option></select>
+        </div>
+      </div>
+      <div id="cyscBlock" class="row hidden"><div>
+        <label for="cysc">Cystatin C (mg/L)</label><input id="cysc" type="number" step="0.01">
+      </div></div>
+      <div id="ecmoBlock" class="row hidden"><div class="inline">
+        <input id="ecmo" type="checkbox"><label for="ecmo">On ECMO</label>
+      </div></div>
+      <div id="rrtBlock" class="row hidden"><div class="inline">
+        <input id="rrt" type="checkbox"><label for="rrt">On RRT (continuous)</label>
+      </div></div>
+      <div id="dialysisBlock" class="row hidden"><div>
+        <label for="dialysis">Renal replacement therapy</label>
+        <select id="dialysis">
+          <option value="none">None</option>
+          <option value="cont">Continuous dialysis</option>
+          <option value="semicont">Semi-continuous (intermittent)</option>
+        </select>
+      </div></div>
+      <div id="rdBlock" class="row hidden"><div>
+        <label for="rd">Residual diuresis (mL/24 h)</label>
+        <input id="rd" type="number" step="50">
+      </div></div>
+      <div id="renalOut"></div>
+    </div>
+
+    <div class="card">
+      <h2>Regimens</h2>
+      <div id="regimens"></div>
+      <div class="inline" style="margin-top:8px">
+        <button class="mini" id="addReg">+ regimen</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>PK/PD target</h2>
+      <div class="row"><div>
+        <label for="target">Target</label><select id="target"></select>
+      </div></div>
+      <div class="row r2">
+        <div><label for="mic">Reference MIC (mg/L)</label><input id="mic" type="number" step="0.25"></div>
+        <div><label for="ptaThresh">PTA threshold (%)</label><input id="ptaThresh" type="number" step="1" value="90"></div>
+      </div>
+      <div class="row r2">
+        <div><label for="nsim">Simulated subjects</label><input id="nsim" type="number" step="100" value="1000"></div>
+        <div><label for="seed">Random seed</label><input id="seed" type="number" step="1" value="20250101"></div>
+      </div>
+      <div class="inline"><input id="logy" type="checkbox"><label for="logy">Log concentration axis</label></div>
+    </div>
+
+    <div class="card">
+      <h2>MIC distribution (optional)</h2>
+      <label for="micDist">MIC, frequency — one pair per line</label>
+      <textarea id="micDist" rows="4" placeholder="0.5, 12&#10;1, 40&#10;2, 25&#10;4, 8"
+        style="width:100%;font:inherit;font-size:.8rem;padding:6px;
+               border:1px solid var(--line);border-radius:5px"></textarea>
+      <div class="cite" style="margin-top:5px">Paste your own isolate MIC frequencies to
+        compute the cumulative fraction of response. No distribution is assumed.</div>
+      <div id="cfrOut"></div>
+    </div>
+
+    <div class="card">
+      <h2>Embed this view</h2>
+      <button class="mini" id="mkEmbed">Build widget URL</button>
+      <textarea id="embedOut" rows="3" readonly
+        style="width:100%;margin-top:7px;font:inherit;font-size:.7rem;padding:6px;
+               border:1px solid var(--line);border-radius:5px;display:none"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Not implemented</h2>
+      <div id="pendingList" class="cite"></div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main id="main">
+    <header>
+      <h1 id="title">Population PK/PD target attainment</h1>
+      <p class="sub" id="subtitle"></p>
+    </header>
+
+    <!-- compact control strip, widget mode only -->
+    <div class="card wstrip-only" id="wstripCard">
+      <div class="wstrip">
+        <div><label for="wDose">Dose (mg)</label><input id="wDose" type="number" step="250"></div>
+        <div><label for="wTau">Interval (h)</label><input id="wTau" type="number" step="1"></div>
+        <div><label for="wTinf">Infusion (h)</label><input id="wTinf" type="number" step="0.25"></div>
+        <div><label for="wMic">MIC (mg/L)</label><input id="wMic" type="number" step="0.25"></div>
+        <div><label for="wTarget">Target</label><select id="wTarget"></select></div>
+        <div><label for="wRenal" id="wRenalLab">Renal function</label><input id="wRenal" type="number" step="5"></div>
+      </div>
+    </div>
+
+    <div id="panelPta" class="card">
+      <div class="grid2">
+        <div>
+          <h2>Probability of target attainment</h2>
+          <div class="plotbox"><canvas id="cvPta" class="plot"></canvas></div>
+          <div class="legend" id="legPta"></div>
+        </div>
+        <div>
+          <h2>Concentration–time profile</h2>
+          <div class="plotbox"><canvas id="cvConc" class="plot"></canvas></div>
+          <div class="legend" id="legConc"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="panelSummary" class="card">
+      <h2>Attainment summary</h2>
+      <div id="summary"></div>
+    </div>
+
+    <!-- ============ Bayesian forecasting (full mode) ============ -->
+    <div class="card full-only" id="panelTdm">
+      <h2>Bayesian forecasting from TDM samples</h2>
+      <p class="sub">Enter measured concentrations with times on the dosing-record
+        clock (t = 0 at the first dose of the record). The MAP estimate combines
+        these with the model prior.</p>
+      <div class="row r4" style="margin-top:10px">
+        <div><label for="tdmDose">Record: dose (mg)</label><input id="tdmDose" type="number" step="250"></div>
+        <div><label for="tdmTau">Interval (h)</label><input id="tdmTau" type="number" step="1"></div>
+        <div><label for="tdmTinf">Infusion (h)</label><input id="tdmTinf" type="number" step="0.25"></div>
+        <div><label for="tdmN">Doses given</label><input id="tdmN" type="number" step="1" value="4"></div>
+      </div>
+      <table style="margin-top:6px">
+        <thead><tr><th>Time (h)</th><th>Concentration (mg/L)</th><th></th></tr></thead>
+        <tbody id="tdmRows"></tbody>
+      </table>
+      <div class="inline" style="margin-top:8px">
+        <button class="mini" id="addTdm">+ sample</button>
+        <button class="primary" id="runMap">Run MAP estimation</button>
+      </div>
+      <div id="mapOut" style="margin-top:12px"></div>
+    </div>
+
+    <p class="cite" id="footer" style="margin-top:14px"></p>
+  </main>
+</div>
+
+<!--PKPD_CORE-->
+<!--PKPD_MODELS-->
+<!--PKPD_APP-->
+</body>
+</html>
