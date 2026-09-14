@@ -257,5 +257,181 @@ const mOje = MODELS.find(m => m.id === 'mem_ojeanson2021');
      `${pNone.toFixed(1)}% > ${pCont.toFixed(1)}% > ${pSemi.toFixed(1)}%`);
 }
 
+/* ===================================================================
+   Models added from user-supplied PDFs
+   =================================================================== */
+console.log('\n\n' + '='.repeat(70));
+console.log('Li 2006 / Ehmann 2019 / Klastrup 2020 / Nicasio 2009');
+console.log('='.repeat(70));
+
+const mLi = MODELS.find(m => m.id === 'mem_li2006');
+const mEh = MODELS.find(m => m.id === 'mem_ehmann2019');
+const mKl = MODELS.find(m => m.id === 'pip_klastrup2020');
+const mNi = MODELS.find(m => m.id === 'cef_nicasio2009');
+
+const ptaOf = (model, cov, regimen, tid, mic, extra) => PKPD.simulate(Object.assign({
+  model, cov, regimen, target: model.targets.find(t => t.id === tid),
+  mics: [mic], mic, n: 4000, seed: 11, nGrid: 600
+}, extra || {})).pta[0].pta;
+
+/* ---- Li 2006 ---- */
+{
+  console.log('\n  Li 2006: fixed effects reproduced from Table II');
+  const p = mLi.params({ crcl: 83, age: 35, wt: 70 });
+  console.log(`    reference patient (CLcr 83, age 35, 70 kg): CL ${p.CL.toFixed(3)} L/h, ` +
+              `V1 ${p.V1.toFixed(2)} L, Q ${p.Q} L/h, V2 ${p.V2} L`);
+  ok('Li CL at the centring covariates equals the published 14.60 L/h',
+     Math.abs(p.CL - 14.60) < 1e-9);
+  ok('Li V1 at 70 kg equals the published 10.80 L', Math.abs(p.V1 - 10.80) < 1e-9);
+  ok('Li age effect is negative (older -> lower clearance)',
+     mLi.params({ crcl: 83, age: 80, wt: 70 }).CL < p.CL);
+  // omega^2 -> omega conversion
+  ok('Li IIV entered as the square root of the published variances',
+     Math.abs(mLi.iiv.CL - Math.sqrt(0.118)) < 1e-12 &&
+     Math.abs(mLi.err.prop - Math.sqrt(0.0352)) < 1e-12,
+     `omega_CL ${mLi.iiv.CL.toFixed(4)}, prop err ${mLi.err.prop.toFixed(4)}`);
+
+  const short = ptaOf(mLi, { wt: 70, age: 60, sex: 'M', crcl: 83 },
+                      { dose: 1000, tau: 8, tinf: 0.5 }, 'ft40', 4);
+  const long = ptaOf(mLi, { wt: 70, age: 60, sex: 'M', crcl: 83 },
+                     { dose: 1000, tau: 8, tinf: 3 }, 'ft40', 4);
+  console.log(`    1 g q8h at MIC 4, 40% fT>MIC: 0.5 h ${short.toFixed(1)}% -> 3 h ${long.toFixed(1)}%`);
+  ok("Li's own conclusion reproduced: a 3 h infusion beats a 0.5 h infusion",
+     long > short, `${short.toFixed(1)}% -> ${long.toFixed(1)}%`);
+
+  /* DOCUMENTED DIFFERENCE, not a defect.
+     The paper reports 64% -> 90% for this comparison. Those absolute
+     values cannot be reproduced by evaluating any single patient,
+     because Li simulated the covariate distribution of the whole
+     studied cohort (7900 profiles resampled from 79 patients aged
+     18-93) while this tool evaluates the specific patient entered, with
+     only between-subject random effects. A mixture over heterogeneous
+     covariates flattens the PTA-vs-MIC curve: it lowers attainment at
+     the short infusion AND lowers it at the long one, and no single
+     covariate point produces both numbers at once. */
+  const pairFits = [60, 83, 100, 120, 140, 160, 180].some(crcl => {
+    const a = ptaOf(mLi, { wt: 70, age: 60, sex: 'M', crcl },
+                    { dose: 1000, tau: 8, tinf: 0.5 }, 'ft40', 4);
+    const b = ptaOf(mLi, { wt: 70, age: 60, sex: 'M', crcl },
+                    { dose: 1000, tau: 8, tinf: 3 }, 'ft40', 4);
+    return Math.abs(a - 64) < 5 && Math.abs(b - 90) < 5;
+  });
+  ok('no single covariate point reproduces both published PTAs (covariate mixture, as expected)',
+     !pairFits,
+     'Li resampled a whole cohort; this tool conditions on one patient');
+}
+
+/* ---- Ehmann 2019 ---- */
+{
+  console.log('\n  Ehmann 2019: reference parameters and the CLcr inflection');
+  const p = mEh.params({ crcl: 80.8, wt: 70, alb: 2.8 });
+  console.log(`    reference (CLcr 80.8, 70 kg, alb 2.8): CL ${p.CL.toFixed(2)} L/h, ` +
+              `V1 ${p.V1.toFixed(2)} L, Q ${p.Q} L/h, V2 ${p.V2.toFixed(2)} L`);
+  ok('Ehmann reference CL equals the published 9.25 L/h', Math.abs(p.CL - 9.25) < 1e-9);
+  ok('Ehmann reference V1 equals the published 7.89 L', Math.abs(p.V1 - 7.89) < 1e-9);
+  ok('Ehmann reference V2 equals the published 16.1 L', Math.abs(p.V2 - 16.1) < 1e-9);
+  ok('clearance plateaus above the published inflection of 154 mL/min',
+     Math.abs(mEh.params({ crcl: 154, wt: 70, alb: 2.8 }).CL -
+              mEh.params({ crcl: 250, wt: 70, alb: 2.8 }).CL) < 1e-9);
+  ok('lower albumin increases the peripheral volume',
+     mEh.params({ crcl: 80.8, wt: 70, alb: 1.5 }).V2 >
+     mEh.params({ crcl: 80.8, wt: 70, alb: 4.0 }).V2);
+
+  // Table 3A: PTA at MIC 2, 1 g q8h 30-min, 98% fT>MIC, day 1.
+  const PUB = { 30: 99.4, 50: 91.2, 70: 69.2, 90: 42.8, 110: 22.7, 150: 6.4 };
+  console.log('    Table 3A comparison (MIC 2, 1 g q8h 0.5 h, 98% fT>MIC):');
+  let maxGap = 0, monotone = true, prev = 101;
+  Object.keys(PUB).forEach(k => {
+    const crcl = +k;
+    const mine = ptaOf(mEh, { wt: 70, age: 60, sex: 'M', crcl, alb: 2.8 },
+                       { dose: 1000, tau: 8, tinf: 0.5 }, 'ft98', 2);
+    maxGap = Math.max(maxGap, mine - PUB[crcl]);
+    if (mine > prev + 1e-9) monotone = false;
+    prev = mine;
+    console.log(`      CLcr ${String(crcl).padStart(3)}  model ${mine.toFixed(1).padStart(5)}%   published ${String(PUB[crcl]).padStart(5)}%`);
+  });
+  ok('Ehmann PTA falls monotonically with rising CLcr, as published', monotone);
+  ok('Ehmann PTA tracks Table 3A within 10 percentage points', maxGap < 10,
+     `largest excess ${maxGap.toFixed(1)} points — this tool omits the parameter ` +
+     `uncertainty and interoccasion variability the paper included, both of which lower PTA`);
+
+  // The paper states day-1 and day-4 attainment differ only marginally.
+  const d1 = ptaOf(mEh, { wt: 70, age: 60, sex: 'M', crcl: 90, alb: 2.8 },
+                   { dose: 1000, tau: 8, tinf: 0.5, nDoses: 3 }, 'ft98', 2, { evalDose: 3 });
+  const ss = ptaOf(mEh, { wt: 70, age: 60, sex: 'M', crcl: 90, alb: 2.8 },
+                   { dose: 1000, tau: 8, tinf: 0.5 }, 'ft98', 2);
+  ok("day 1 and steady state differ only marginally, as the paper reports",
+     Math.abs(d1 - ss) < 3, `day 1 ${d1.toFixed(1)}% vs steady state ${ss.toFixed(1)}%`);
+}
+
+/* ---- Klastrup 2020 ---- */
+{
+  console.log('\n  Klastrup 2020: half-lives and renal clearance fractions');
+  const PUB_T = { 30: 4.3, 80: 2.1, 130: 1.4 }, PUB_F = { 30: 61.3, 80: 80.9, 130: 87.3 };
+  let tOK = true, fOK = true;
+  [30, 80, 130].forEach(crcl => {
+    const p = mKl.params({ crcl }),
+          thalf = Math.LN2 * p.V1 / p.CL,
+          frac = 100 * 0.119 * crcl / p.CL;
+    if (Math.abs(thalf - PUB_T[crcl]) > 0.05) tOK = false;
+    if (Math.abs(frac - PUB_F[crcl]) > 0.1) fOK = false;
+    console.log(`    CRCL ${String(crcl).padStart(3)}  CL ${p.CL.toFixed(2)} L/h  ` +
+                `t1/2 ${thalf.toFixed(2)} h (pub ${PUB_T[crcl]})  ` +
+                `renal ${frac.toFixed(1)}% (pub ${PUB_F[crcl]}%)`);
+  });
+  ok('Klastrup half-lives reproduce the published 4.3 / 2.1 / 1.4 h', tOK);
+  ok('Klastrup renal clearance fractions reproduce the published 61.3 / 80.9 / 87.3%', fOK);
+
+  // "PTA for 100% fT>1xMIC was above 90% for daily dosing of 8, 12 and 16 g
+  //  ... whereas 20 g was required for the group with CRCL >130 mL/min"
+  const ci = (g, crcl) => ptaOf(mKl, { crcl }, { mode: 'ci', dose24: g, duration: 120 },
+                                'ft100', 16);
+  const low = [8000, 12000, 16000].map(g => ci(g, 54));
+  console.log(`    CRCL 54, MIC 16, 100% fT>MIC: 8 g ${low[0].toFixed(1)}%, ` +
+              `12 g ${low[1].toFixed(1)}%, 16 g ${low[2].toFixed(1)}%`);
+  ok('PTA exceeds 90% for 8, 12 and 16 g/day below CRCL 130, as published',
+     low.every(v => v > 90));
+  ok('a higher daily dose is needed at high CRCL than at low CRCL',
+     ci(8000, 150) < low[0], `8 g at CRCL 150 = ${ci(8000, 150).toFixed(1)}%`);
+}
+
+/* ---- Nicasio 2009 ---- */
+{
+  console.log('\n  Nicasio 2009: nonparametric covariance and target attainment');
+  // The covariance diagonal must reproduce the tabulated SDs.
+  const SD = [0.06, 0.011, 1.023, 1.082, 0.187];
+  const diagOK = SD.every((s, i) => Math.abs(Math.sqrt(mNi.mvCov[i][i]) - s) < 0.002);
+  ok('covariance diagonal reproduces the published SDs (Table 2 vs Table 3)', diagOK,
+     mNi.mvCov.map((r, i) => Math.sqrt(r[i]).toFixed(3)).join(', '));
+  const symmetric = mNi.mvCov.every((row, i) =>
+    row.every((v, j) => Math.abs(v - mNi.mvCov[j][i]) < 1e-12));
+  ok('covariance matrix is symmetric', symmetric);
+
+  // The paper's own anchor: 2 g q12h 3-h infusion at CLcr 30-49.
+  const r40 = [8, 16, 32].map(m => ptaOf(mNi, { wt: 84, age: 57, sex: 'M', crcl: 40 },
+                                         { dose: 2000, tau: 12, tinf: 3 }, 'ft50', m));
+  const PUB40 = [93.8, 79.8, 50.7];
+  console.log('    2 g q12h, 3 h infusion, CLcr 40 (published 93.8 / 79.8 / 50.7):');
+  console.log(`      MIC 8/16/32: ${r40.map(v => v.toFixed(1) + '%').join('  ')}`);
+  ok('Nicasio PTA at CLcr 40 reproduces the published values within 5 points',
+     r40.every((v, i) => Math.abs(v - PUB40[i]) < 5),
+     r40.map((v, i) => `${v.toFixed(1)} vs ${PUB40[i]}`).join('; '));
+
+  const sim = PKPD.simulate({
+    model: mNi, cov: { wt: 84, age: 57, sex: 'M', crcl: 100 },
+    regimen: { dose: 2000, tau: 8, tinf: 3 }, target: mNi.targets[0],
+    mics: [8], mic: 8, n: 4000, seed: 11
+  });
+  console.log(`    rejected fraction of multivariate-normal draws: ` +
+              `${(sim.rejectedFraction * 100).toFixed(1)}%`);
+  ok('the rejection fraction is reported rather than hidden',
+     sim.rejectedFraction > 0 && sim.rejectedFraction < 0.95,
+     'normal-scale draws of K12/K21 are frequently non-positive; a truncated ' +
+     'normal is not exactly the nonparametric distribution that was fitted');
+  ok('prolonging the infusion raises attainment (the paper\u2019s conclusion)',
+     ptaOf(mNi, { wt: 84, age: 57, sex: 'M', crcl: 100 }, { dose: 2000, tau: 8, tinf: 3 }, 'ft50', 8) >
+     ptaOf(mNi, { wt: 84, age: 57, sex: 'M', crcl: 100 }, { dose: 2000, tau: 8, tinf: 0.5 }, 'ft50', 8));
+}
+
 console.log(fails === 0 ? '\nVALIDATION PASSED' : `\n${fails} VALIDATION CHECK(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

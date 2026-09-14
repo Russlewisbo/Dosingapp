@@ -353,5 +353,132 @@ function rk4Two(p, R0, Tinf, tEnd, h) {
      relerr(off.CL, 1.89 * 100 * 0.06) < 1e-12, `CL=${off.CL.toFixed(3)} L/h at CLcr 100`);
 }
 
+/* ---- 17. Evaluation window vs plot window.
+   The PD target is evaluated over ONE dosing interval; which interval is
+   selectable, and the plot window is independent of it. ---- */
+{
+  const model = MODELS.find(m => m.id === 'mem_gijsen2021');
+  const cov = { wt: 70, age: 60, sex: 'M', egfr: 105 };
+  const base = { model, cov, regimen: { dose: 1000, tau: 8, tinf: 0.5 },
+                 target: model.targets.find(t => t.id === 'ft100'),
+                 mics: [2], mic: 2, n: 300, seed: 5 };
+
+  const last = PKPD.simulate(base);
+  ok('default evaluates the LAST dosing interval',
+     relerr(last.tB, last.nDoses * 8) < 1e-12 && relerr(last.tA, (last.nDoses - 1) * 8) < 1e-12,
+     `dose ${last.evalDose} of ${last.nDoses}: ${last.tA}-${last.tB} h`);
+  ok('default schedule is dosed out to steady state', last.atSteadyState === true,
+     `${last.nDoses} doses given, ${last.dosesToSteadyState} needed`);
+
+  const first = PKPD.simulate({ ...base, evalDose: 1 });
+  ok('evalDose=1 evaluates the first interval',
+     first.tA === 0 && relerr(first.tB, 8) < 1e-12, `${first.tA}-${first.tB} h`);
+  ok('first interval is flagged as NOT steady state', first.atSteadyState === false);
+
+  // An accumulating drug must not attain MORE on dose 1 than at steady state.
+  ok('first-dose attainment does not exceed steady-state attainment',
+     first.pta[0].pta <= last.pta[0].pta + 1e-9,
+     `dose 1 ${first.pta[0].pta.toFixed(1)}% vs steady state ${last.pta[0].pta.toFixed(1)}%`);
+
+  // Plot window is independent of the evaluation window.
+  const whole = PKPD.simulate({ ...base, plotWhole: true });
+  ok('plotWhole spans the whole course',
+     whole.tPlotA === 0 && relerr(whole.tPlotB, whole.nDoses * 8) < 1e-12,
+     `plot ${whole.tPlotA}-${whole.tPlotB} h over ${whole.nDoses} doses`);
+  ok('plotWhole leaves the evaluation window unchanged',
+     whole.tA === last.tA && whole.tB === last.tB);
+  ok('plotWhole does not change the reported metrics',
+     Math.abs(whole.pta[0].pta - last.pta[0].pta) < 1e-9,
+     `${whole.pta[0].pta.toFixed(2)}% vs ${last.pta[0].pta.toFixed(2)}%`);
+  ok('plot grid actually covers the course',
+     whole.times[0] === 0 && relerr(whole.times[whole.times.length - 1], whole.nDoses * 8) < 1e-12);
+
+  // A short course must be reported as pre-steady-state, not mislabelled.
+  const short = PKPD.simulate({ ...base, regimen: { dose: 1000, tau: 8, tinf: 0.5, nDoses: 2 } });
+  ok('a 2-dose course is flagged pre-steady-state when more doses are needed',
+     short.nDoses === 2 && short.atSteadyState === (2 >= short.dosesToSteadyState),
+     `2 doses given, ${short.dosesToSteadyState} needed -> atSteadyState=${short.atSteadyState}`);
+  ok('evalDose is clamped to the number of doses given',
+     PKPD.simulate({ ...base, regimen: { dose: 1000, tau: 8, tinf: 0.5, nDoses: 3 },
+                     evalDose: 99 }).evalDose === 3);
+
+  // Accumulation must be visible: trough on dose 1 < trough at steady state.
+  const t1 = PKPD.simulate({ ...base, evalDose: 1 }).exposure.cmin.median;
+  const tss = last.exposure.cmin.median;
+  ok('trough accumulates from the first dose to steady state', tss > t1,
+     `dose 1 ${t1.toFixed(2)} -> steady state ${tss.toFixed(2)} mg/L`);
+}
+
+/* ---- 19. Multivariate-normal sampling on the natural scale.
+   Used for nonparametric models that publish a covariance matrix. With
+   a mean far from any boundary, no draw is rejected and the sampler must
+   recover the requested means, SDs and correlation. ---- */
+{
+  // Direct 2-parameter check: CL and V1 sampled with a known covariance.
+  const spec = {
+    ncmt: 1, fu: 1, sampling: 'mvnorm',
+    mvMean: [10, 40],
+    mvCov: [[4, 2.4], [2.4, 9]],           // SD 2 and 3, correlation 0.4
+    params: () => ({ CL: 10, V1: 40 }),
+    paramsFromDraw: (d) => ({ CL: d[0], V1: d[1] })
+  };
+  const s = PKPD.samplePopulation(spec, {}, 40000, 5);
+  const cl = s.map(p => p.CL), v1 = s.map(p => p.V1);
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const sd = a => { const m = mean(a); return Math.sqrt(mean(a.map(x => (x - m) ** 2))); };
+  const corr = (a, b) => {
+    const ma = mean(a), mb = mean(b);
+    return mean(a.map((x, i) => (x - ma) * (b[i] - mb))) / (sd(a) * sd(b));
+  };
+  ok('MVN sampler recovers the mean vector', Math.abs(mean(cl) - 10) < 0.05 &&
+     Math.abs(mean(v1) - 40) < 0.08, `${mean(cl).toFixed(3)}, ${mean(v1).toFixed(3)}`);
+  ok('MVN sampler recovers the marginal SDs', Math.abs(sd(cl) - 2) < 0.04 &&
+     Math.abs(sd(v1) - 3) < 0.06, `${sd(cl).toFixed(3)}, ${sd(v1).toFixed(3)}`);
+  ok('MVN sampler recovers the correlation', Math.abs(corr(cl, v1) - 0.4) < 0.02,
+     corr(cl, v1).toFixed(4));
+  ok('no rejection when the distribution is far from the positivity boundary',
+     s.rejectedFraction < 1e-6, `${(s.rejectedFraction * 100).toFixed(3)}%`);
+  ok('the sampler is reproducible for a fixed seed',
+     PKPD.samplePopulation(spec, {}, 200, 5)[7].CL === PKPD.samplePopulation(spec, {}, 200, 5)[7].CL);
+}
+
+/* ---- 20. Rejection of non-physical draws.
+   A mean close to zero relative to its SD forces rejections; every
+   returned subject must still be physically valid, and the requested
+   count must be honoured. ---- */
+{
+  const spec = {
+    ncmt: 1, fu: 1, sampling: 'mvnorm',
+    mvMean: [1, 40], mvCov: [[4, 0], [0, 9]],   // CL mean 1, SD 2
+    params: () => ({ CL: 1, V1: 40 }),
+    paramsFromDraw: (d) => ({ CL: d[0], V1: d[1] })
+  };
+  const s = PKPD.samplePopulation(spec, {}, 3000, 9);
+  ok('rejection sampling returns exactly the requested number of subjects',
+     s.length === 3000, `${s.length}`);
+  ok('every returned subject is physically valid',
+     s.every(p => p.CL > 0 && p.V1 > 0));
+  ok('the rejection fraction is reported and substantial here',
+     s.rejectedFraction > 0.2 && s.rejectedFraction < 0.45,
+     `${(s.rejectedFraction * 100).toFixed(1)}% (theoretical ~31% for mean 1, SD 2)`);
+}
+
+/* ---- 21. Micro-constant conversion for the nonparametric cefepime model.
+   CL/V1/Q/V2 must be recoverable from K10/K12/K21/V1, and the model's
+   typical parameters must satisfy the published rate constants. ---- */
+{
+  const m = MODELS.find(x => x.id === 'cef_nicasio2009');
+  const cov = { wt: 80, age: 60, sex: 'M', crcl: 100 };
+  const p = m.params(cov);
+  const k10 = p.CL / p.V1, k12 = p.Q / p.V1, k21 = p.Q / p.V2;
+  ok('K10 = 0.071 + 0.0027 x CLcr as published',
+     relerr(k10, 0.071 + 0.0027 * 100) < 1e-12, `K10 ${k10.toFixed(5)} /h`);
+  ok('V1 = 0.206 L/kg x total body weight', relerr(p.V1, 0.206 * 80) < 1e-12,
+     `V1 ${p.V1.toFixed(2)} L`);
+  ok('K12 and K21 recover the published medians',
+     relerr(k12, 0.78) < 1e-12 && relerr(k21, 0.472) < 1e-12,
+     `K12 ${k12.toFixed(4)}, K21 ${k21.toFixed(4)}`);
+}
+
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

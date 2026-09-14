@@ -67,7 +67,7 @@ function boot(search) {
   ok('full mode: no script errors', errors.length === 0, errors.slice(0, 2).join(' | '));
   ok('full mode: PKPD engine exposed', typeof w.PKPD === 'object');
   ok('full mode: model library loaded',
-     w.PKPD_MODELS.MODELS.length === 6,
+     w.PKPD_MODELS.MODELS.length === 10,
      `${w.PKPD_MODELS.MODELS.length} models`);
   const summary = d.getElementById('summary').textContent;
   ok('full mode: summary rendered with a PTA value', /%/.test(summary) && summary.length > 40);
@@ -78,9 +78,12 @@ function boot(search) {
      d.getElementById('cvConc').__ctx._rec.strokes > 5);
   ok('full mode: model citation shown',
      /doi/.test(d.getElementById('modelCite').innerHTML));
-  ok('full mode: not-implemented models disclosed',
-     /Nicasio/.test(d.getElementById('pendingList').textContent) &&
-     /Klastrup/.test(d.getElementById('pendingList').textContent));
+  // The omission list is now empty — every previously-blocked model was
+  // implemented once its PDF was supplied. The mechanism must still be
+  // present and must say so explicitly rather than rendering blank.
+  ok('full mode: omissions panel states that none remain',
+     /none/i.test(d.getElementById('pendingList').textContent),
+     d.getElementById('pendingList').textContent.slice(0, 70));
   ok('full mode: sidebar visible', !d.body.classList.contains('widget'));
 }
 
@@ -264,13 +267,30 @@ function boot(search) {
      /correlation/i.test(d.getElementById('modelNote').textContent));
 }
 {
-  // Both unavailable meropenem models must be disclosed, not silently absent.
+  // Every model once listed as unavailable is now implemented from its
+  // own parameter table, so each must be selectable and must carry a
+  // source citation — the previous disclosure is replaced by the model.
   const { d } = boot('?n=200');
-  const pend = d.getElementById('pendingList').textContent;
-  ok('Li 2006 disclosed as requested-but-unavailable', /Li 2006/.test(pend));
-  ok('Ehmann 2019 disclosed as requested-but-unavailable', /Ehmann 2019/.test(pend));
-  ok('omission reasons name the access barrier',
-     /closed access/i.test(pend), pend.slice(0, 100));
+  // The model dropdown is filtered by the selected drug, so each model is
+  // checked by booting directly into it and confirming it is the one that
+  // loaded (an unknown id would silently fall back to the default).
+  ['mem_li2006', 'mem_ehmann2019', 'pip_klastrup2020', 'cef_nicasio2009']
+    .forEach(id => {
+      const b = boot('?model=' + id + '&n=150');
+      const sel = b.d.getElementById('model').value;
+      ok('previously-unavailable model now implemented: ' + id,
+         sel === id && b.errors.length === 0,
+         `selected ${sel}${b.errors.length ? ' | ' + b.errors[0] : ''}`);
+    });
+  const drugs = Array.from(d.getElementById('drug').options).map(o => o.value);
+  ok('cefepime is now offered as a drug', drugs.indexOf('Cefepime') >= 0, drugs.join(','));
+  const M = require('./models.js').MODELS;
+  ok('every model cites a specific table or figure in its source',
+     M.every(m => /Table|Fig|equation/i.test(m.source)),
+     M.filter(m => !/Table|Fig|equation/i.test(m.source)).map(m => m.id).join(',') || 'all cite');
+  ok('four drugs are represented',
+     new Set(M.map(m => m.drug)).size === 4,
+     Array.from(new Set(M.map(m => m.drug))).join(', '));
 }
 {
   // A meropenem target ladder is available and RRT lowers attainment.
@@ -288,6 +308,315 @@ function boot(search) {
   ok('meropenem target ladder offers 40/50/100% fT>MIC and 100% fT>4xMIC',
      ['ft40', 'ft50', 'ft100', 'ft100x4'].every(t => tvals.indexOf(t) >= 0),
      tvals.join(','));
+}
+
+/* ---- 12. REGRESSION: the header must follow the selected model.
+   Previously the title and subtitle were written once at start-up, so
+   selecting a meropenem model left the page headed "Piperacillin —
+   target attainment" while the plots below it were correct. ---- */
+{
+  const { w, d } = boot('?model=pip_kim2022&n=200');
+  ok('header starts on the selected drug',
+     /Piperacillin/.test(d.getElementById('title').textContent),
+     d.getElementById('title').textContent);
+
+  // Switch the drug select to Meropenem, as a user would.
+  const dsel = d.getElementById('drug');
+  dsel.value = 'Meropenem';
+  dsel.dispatchEvent(new w.Event('change', { bubbles: true }));
+
+  const title = d.getElementById('title').textContent;
+  const sub = d.getElementById('subtitle').textContent;
+  ok('header follows a drug change', /Meropenem/.test(title) && !/Piperacillin/.test(title), title);
+  ok('subtitle no longer names the previous model',
+     !/Kim 2022/.test(sub), sub.slice(0, 90));
+  ok('subtitle names the model actually selected',
+     new RegExp(d.getElementById('model').selectedOptions[0].textContent.split(' \u2014 ')[0]).test(sub),
+     sub.slice(0, 90));
+
+  // And back again, to prove it is not a one-way latch.
+  dsel.value = 'Vancomycin';
+  dsel.dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok('header follows a second drug change',
+     /Vancomycin/.test(d.getElementById('title').textContent),
+     d.getElementById('title').textContent);
+}
+
+/* ---- 13. Dosing-course controls ---- */
+{
+  const { w, d } = boot('?model=mem_gijsen2021&mic=2&target=ft100&dose=1000&tau=8&tinf=0.5&n=300');
+  ok('subtitle states which dose of how many was evaluated',
+     /dose \d+ of \d+/.test(d.getElementById('subtitle').textContent),
+     d.getElementById('subtitle').textContent.slice(-45));
+  ok('course note reports the evaluated window and steady-state status',
+     /Target evaluated over dose/.test(d.getElementById('courseNote').textContent) &&
+     /steady state/.test(d.getElementById('courseNote').textContent),
+     d.getElementById('courseNote').textContent.slice(0, 110));
+
+  const pta0 = parseFloat(d.getElementById('summary').textContent.match(/([\d.]+)%/)[1]);
+
+  // Evaluate the first dose instead: attainment must not increase.
+  const ev = d.getElementById('evalDoseIn');
+  ev.value = '1';
+  ev.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const pta1 = parseFloat(d.getElementById('summary').textContent.match(/([\d.]+)%/)[1]);
+  ok('evaluating dose 1 lowers (or equals) attainment vs steady state', pta1 <= pta0,
+     `steady state ${pta0}% -> dose 1 ${pta1}%`);
+  ok('course note flags the pre-steady-state evaluation',
+     /NOT yet steady state/.test(d.getElementById('courseNote').textContent),
+     d.getElementById('courseNote').textContent.slice(0, 100));
+
+  // Limiting the doses given must be reflected in the subtitle.
+  ev.value = '';
+  ev.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const nd = d.getElementById('nDosesIn');
+  nd.value = '2';
+  nd.dispatchEvent(new w.Event('input', { bubbles: true }));
+  ok('setting doses given to 2 is reflected in the header',
+     /dose 2 of 2/.test(d.getElementById('subtitle').textContent),
+     d.getElementById('subtitle').textContent.slice(-40));
+}
+
+/* ---- 14. Whole-course view ---- */
+{
+  const { w, d } = boot('?model=mem_gijsen2021&mic=2&target=ft100&dose=1000&tau=8&tinf=0.5&n=250');
+  // This mock records fillText as plain strings and never clears between
+  // renders, so the recorder is reset before each toggle to read only the
+  // labels the NEXT render emits.
+  const rec = d.getElementById('cvConc').__ctx._rec;
+  const freshText = (act) => { rec.texts.length = 0; act(); return rec.texts.join('|'); };
+
+  ok('single-interval view labels the axis as one interval',
+     /dosing interval/.test(freshText(() => {
+       const m = d.getElementById('mic'); m.value = '2';
+       m.dispatchEvent(new w.Event('input', { bubbles: true }));
+     })), rec.texts.filter(s => /Time/.test(s)).join());
+
+  const pw = d.getElementById('plotWhole');
+  const after = freshText(() => {
+    pw.checked = true;
+    pw.dispatchEvent(new w.Event('change', { bubbles: true }));
+  });
+  ok('whole-course view relabels the time axis',
+     /Time since first dose/.test(after), '');
+  ok('whole-course view marks the evaluated interval',
+     /evaluated/.test(after), '');
+  ok('the widget view selector stays in sync with the checkbox',
+     d.getElementById('wWhole').value === '1');
+
+  // Metrics must be unchanged by a display-only toggle.
+  const ptaWhole = parseFloat(d.getElementById('summary').textContent.match(/([\d.]+)%/)[1]);
+  pw.checked = false;
+  pw.dispatchEvent(new w.Event('change', { bubbles: true }));
+  const ptaOne = parseFloat(d.getElementById('summary').textContent.match(/([\d.]+)%/)[1]);
+  ok('switching the plot window does not change the reported PTA',
+     ptaWhole === ptaOne, `${ptaWhole}% vs ${ptaOne}%`);
+}
+
+/* ---- 15. Course settings survive into an embed URL ---- */
+{
+  const { w, d } = boot('?model=mem_gijsen2021&ndoses=4&evaldose=2&whole=1&n=200');
+  ok('URL params ndoses/evaldose are applied',
+     /dose 2 of 4/.test(d.getElementById('subtitle').textContent),
+     d.getElementById('subtitle').textContent.slice(-40));
+  ok('whole=1 is applied from the URL', d.getElementById('plotWhole').checked);
+  d.getElementById('mkEmbed').dispatchEvent(new w.Event('click', { bubbles: true }));
+  const v = d.getElementById('embedOut').value;
+  ok('embed URL round-trips the course settings',
+     /ndoses=4/.test(v) && /evaldose=2/.test(v) && /whole=1/.test(v),
+     v.slice(0, 120));
+}
+
+/* ---- 16. REGRESSION: the MAP individual forecast must be inside the
+   y-axis and on the plot's time base.
+   Previously the overlay was excluded from the y-scale (an individual
+   whose peaks exceeded the population band was clipped at the top of the
+   axis) and was precomputed on a fixed 0-to-tau axis, so in whole-course
+   view it was compressed into the first dosing interval. ---- */
+{
+  const { w, d } = boot('?model=van_thomson2009&target=auc400&mic=1' +
+                        '&dose=1000&tau=12&tinf=1&n=200');
+
+  // Fit an individual with deliberately high concentrations, which is
+  // what pushes the overlay above the population band.
+  d.getElementById('tdmDose').value = '1000';
+  d.getElementById('tdmTau').value = '12';
+  d.getElementById('tdmTinf').value = '1';
+  d.getElementById('tdmN').value = '4';
+  // The TDM table starts with a single blank row; a second is needed to
+  // make the two-sample fit identifiable.
+  d.getElementById('addTdm').dispatchEvent(new w.Event('click', { bubbles: true }));
+  const setRow = (i, t, c) => {
+    const inp = d.querySelectorAll('#tdmRows tr')[i].querySelectorAll('input');
+    inp[0].value = String(t); inp[0].dispatchEvent(new w.Event('input', { bubbles: true }));
+    inp[1].value = String(c); inp[1].dispatchEvent(new w.Event('input', { bubbles: true }));
+  };
+  setRow(0, 25, 55);   // very high peak -> low-clearance individual
+  setRow(1, 35, 34);
+  d.getElementById('runMap').dispatchEvent(new w.Event('click', { bubbles: true }));
+
+  const mapOut = d.getElementById('mapOut').textContent;
+  ok('MAP estimation produced a result', mapOut.length > 0 && /CL/.test(mapOut),
+     mapOut.slice(0, 60).replace(/\s+/g, ' '));
+
+  ok('individual forecast is labelled in the legend',
+     /MAP individual forecast/.test(d.getElementById('legConc').textContent),
+     d.getElementById('legConc').textContent.slice(0, 90));
+
+  // Switching to the whole-course view must not drop the overlay; its
+  // geometry (staying inside the axes) is checked in test-layout.cjs,
+  // whose canvas mock records coordinates.
+  const pw = d.getElementById('plotWhole');
+  pw.checked = true;
+  pw.dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok('individual forecast survives a switch to the whole-course view',
+     /MAP individual forecast/.test(d.getElementById('legConc').textContent));
+}
+
+/* ---- 17. Every covariate a model actually uses must be reachable.
+   The real failure mode is a model that uses a covariate its `covariates`
+   list forgot to declare: the input stays hidden, and the user cannot
+   change a value that is silently affecting their results. This boots
+   each model and checks that anything with a visible effect has a
+   visible input. ---- */
+{
+  const MODELS = require('./models.js').MODELS;
+  // Inputs that live in a block the model can hide.
+  const GATED = { cysc: 'cyscBlock', alb: 'albBlock', rd: 'rdBlock',
+                  ecmo: 'ecmoBlock', rrt: 'rrtBlock', dialysis: 'dialysisBlock',
+                  scr: 'scrBlock' };
+  MODELS.forEach(m => {
+    const { d, errors } = boot('?model=' + m.id + '&n=120');
+    const summary = d.getElementById('covEffects').textContent;
+    ok(m.id + ': covariate effects are stated', /Covariates in this model/.test(summary) &&
+       errors.length === 0, summary.slice(0, 60));
+
+    // Parse the rendered effects back out and confirm each is settable.
+    const unreachable = Object.keys(GATED).filter(k => {
+      const el = d.getElementById(k);
+      if (!el) return false;
+      const usesIt = !el.classList.contains('inert');
+      if (!usesIt) return false;
+      const blk = d.getElementById(GATED[k]);
+      return blk && blk.classList.contains('hidden');
+    });
+    ok(m.id + ': no covariate it uses is hidden from the form',
+       unreachable.length === 0, unreachable.join(','));
+  });
+}
+
+/* ---- 18. Covariate annotations distinguish real effects from inert
+   inputs, and follow the model rather than being fixed. ---- */
+{
+  const a = boot('?model=mem_ehmann2019&n=120').d;
+  ok('Ehmann: albumin is shown and marked as acting on V2',
+     !a.getElementById('albBlock').classList.contains('hidden') &&
+     !a.getElementById('alb').classList.contains('inert') &&
+     /Albumin/.test(a.getElementById('covEffects').textContent),
+     a.getElementById('covEffects').textContent.slice(0, 110));
+
+  const b = boot('?model=mem_li2006&n=120').d;
+  ok('Li: albumin input is hidden (the model does not use it)',
+     b.getElementById('albBlock').classList.contains('hidden'));
+
+  // Weight acts on volumes for Li but only through CLcr for Shekar —
+  // the annotation must tell those apart.
+  const liEff = b.getElementById('covEffects').textContent;
+  const shEff = boot('?model=mem_shekar2014&n=120').d
+                  .getElementById('covEffects').textContent;
+  ok('weight is reported as moving a volume for Li but not for Shekar',
+     /Weight → CL\/V/.test(liEff) && /Weight → CL ·/.test(shEff),
+     `Li: ${(liEff.match(/Weight[^·]*/) || [''])[0].trim()} | ` +
+     `Shekar: ${(shEff.match(/Weight[^·]*/) || [''])[0].trim()}`);
+
+  const o = boot('?model=mem_ojeanson2021&n=120').d;
+  ok('O\u2019Jeanson: RRT modality and residual diuresis are both offered',
+     !o.getElementById('dialysisBlock').classList.contains('hidden') &&
+     !o.getElementById('rdBlock').classList.contains('hidden'));
+
+  /* Modality decides whether the other renal inputs do anything:
+     semi-continuous (intermittent) dialysis fixes clearance at 11.0 L/h
+     independently of GFR and residual diuresis, whereas continuous
+     dialysis keeps the diuresis term. The annotation must track that,
+     and this asserts the direction so a swapped branch would fail. */
+  const semi = boot('?model=mem_ojeanson2021&dialysis=semicont&n=120').d;
+  ok('semi-continuous dialysis: residual diuresis correctly reports no effect',
+     semi.getElementById('rd').classList.contains('inert'),
+     semi.getElementById('covEffects').textContent.slice(0, 90));
+  ok('semi-continuous dialysis: creatinine also reports no effect',
+     semi.getElementById('scr').classList.contains('inert'));
+
+  const cont = boot('?model=mem_ojeanson2021&dialysis=cont&n=120').d;
+  ok('continuous dialysis: residual diuresis DOES act on clearance',
+     !cont.getElementById('rd').classList.contains('inert') &&
+     /Residual diuresis/.test(cont.getElementById('covEffects').textContent),
+     cont.getElementById('covEffects').textContent.slice(0, 90));
+
+  // And the underlying model must agree with what the UI reports.
+  const oj = require('./models.js').MODELS.find(x => x.id === 'mem_ojeanson2021');
+  const base = { egfr: 49, dialysis: 'semicont', rd: 845 };
+  ok('model: semi-continuous clearance is flat at 11.0 L/h',
+     oj.params(base).CL === 11.0 &&
+     oj.params({ ...base, rd: 2000 }).CL === 11.0 &&
+     oj.params({ ...base, egfr: 120 }).CL === 11.0);
+  ok('model: continuous clearance moves with residual diuresis',
+     oj.params({ egfr: 49, dialysis: 'cont', rd: 2000 }).CL >
+     oj.params({ egfr: 49, dialysis: 'cont', rd: 845 }).CL);
+}
+
+/* ---- 19. Bayesian forecasting can be switched off and on. ---- */
+{
+  const { w, d } = boot('?model=van_thomson2009&target=auc400&mic=1&n=150');
+  ok('forecasting is enabled by default', d.getElementById('bayesOn').checked);
+  ok('the TDM body is active when enabled',
+     !d.getElementById('tdmBody').classList.contains('off'));
+
+  // Fit an individual, then switch forecasting off.
+  d.getElementById('addTdm').dispatchEvent(new w.Event('click', { bubbles: true }));
+  const setRow = (i, t, c) => {
+    const inp = d.querySelectorAll('#tdmRows tr')[i].querySelectorAll('input');
+    inp[0].value = String(t); inp[0].dispatchEvent(new w.Event('input', { bubbles: true }));
+    inp[1].value = String(c); inp[1].dispatchEvent(new w.Event('input', { bubbles: true }));
+  };
+  setRow(0, 25, 42); setRow(1, 35, 26);
+  d.getElementById('runMap').dispatchEvent(new w.Event('click', { bubbles: true }));
+  ok('overlay is present after a fit',
+     /MAP individual forecast/.test(d.getElementById('legConc').textContent));
+
+  const bt = d.getElementById('bayesOn');
+  bt.checked = false;
+  bt.dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok('switching off removes the overlay from the plot',
+     !/MAP individual forecast/.test(d.getElementById('legConc').textContent));
+  ok('switching off disables the TDM body',
+     d.getElementById('tdmBody').classList.contains('off'));
+  ok('switching off is stated in the panel',
+     /population prediction only/.test(d.getElementById('bayesState').textContent),
+     d.getElementById('bayesState').textContent);
+
+  // Switching back on restores the SAME fit rather than discarding it.
+  bt.checked = true;
+  bt.dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok('switching back on restores the overlay without refitting',
+     /MAP individual forecast/.test(d.getElementById('legConc').textContent));
+
+  // URL round-trip.
+  const off = boot('?model=van_thomson2009&target=auc400&bayes=0&n=120').d;
+  ok('bayes=0 is honoured from the URL', !off.getElementById('bayesOn').checked);
+  const mk = off.getElementById('mkEmbed');
+  mk.dispatchEvent(new w.Event('click', { bubbles: true }));
+  ok('embed URL carries bayes=0', /bayes=0/.test(off.getElementById('embedOut').value));
+}
+
+/* ---- 20. The toggle is disabled where the MODEL cannot support
+   forecasting, so it cannot promise something unavailable. ---- */
+{
+  ['pip_udy2015', 'cef_nicasio2009'].forEach(id => {
+    const d = boot('?model=' + id + '&n=120').d;
+    ok(id + ': forecasting toggle is disabled', d.getElementById('bayesOn').disabled);
+    ok(id + ': the panel says it is unavailable',
+       /unavailable for this model/.test(d.getElementById('bayesState').textContent));
+  });
 }
 
 console.log(fails === 0 ? '\nALL APP TESTS PASSED' : `\n${fails} APP TEST(S) FAILED`);

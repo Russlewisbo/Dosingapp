@@ -28,6 +28,21 @@
 
   var LADDER = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128];
 
+  /* Convert a nonparametric micro-constant vector to the CL/V1/Q/V2
+     parameterisation the engine solves in.
+       d = [Ki, KS, K12, K21, V1_per_kg]
+       K10 = Ki + KS * CLcr      (the paper's elimination-rate model)
+       V1  = V1_per_kg * TBW
+       CL  = K10 * V1,  Q = K12 * V1,  V2 = Q / K21
+     The last identity is exact: at equilibrium K12*V1 = K21*V2. */
+  function microToMacro(d, c) {
+    var k10 = d[0] + d[1] * Math.max(0, c.crcl),
+        v1 = d[4] * c.wt,
+        q = d[2] * v1;
+    if (!(k10 > 0) || !(v1 > 0) || !(q > 0) || !(d[3] > 0)) return null;
+    return { CL: k10 * v1, V1: v1, Q: q, V2: q / d[3] };
+  }
+
   /* ---------------- Targets ---------------- */
   var T_FT50  = { id: 'ft50',  type: 'ftmic', threshold: 50,  label: '50% fT>MIC' };
   var T_FT100 = { id: 'ft100', type: 'ftmic', threshold: 100, label: '100% fT>MIC' };
@@ -41,7 +56,20 @@
   // classical bactericidal exposure for carbapenems, while 100% fT>MIC
   // and 100% fT>4xMIC are the critical-care targets used by the source
   // papers implemented below.
+  var T_FT20 = { id: 'ft20', type: 'ftmic', threshold: 20, label: '20% fT>MIC' };
+  var T_FT98 = { id: 'ft98', type: 'ftmic', threshold: 98, label: '98% fT>MIC' };
+  var T_FT98x4 = {
+    id: 'ft98x4', type: 'ftmic', threshold: 98, micMultiplier: 4,
+    label: '98% fT>4\u00d7MIC'
+  };
   var MERO_TARGETS = [T_FT40, T_FT50, T_FT100, T_FT100x4];
+  // Li 2006 used 20% fT>MIC (bacteriostatic) and 40% fT>MIC (bactericidal);
+  // Ehmann 2019 used 98% fT>MIC (and 98% fT>4xMIC for continuous infusion),
+  // relaxed from 100% because the target is unreachable on day 1 while the
+  // first infusion is still climbing. Each model offers its own paper's
+  // targets first so the app's defaults match the source.
+  var MERO_TARGETS_LI = [T_FT20, T_FT40, T_FT50, T_FT100];
+  var MERO_TARGETS_EH = [T_FT98, T_FT98x4, T_FT50, T_FT100];
 
   var MODELS = [
 
@@ -387,46 +415,253 @@
       targets: MERO_TARGETS,
       defaultRegimen: { dose: 1000, tau: 8, tinf: 0.5 },
       defaultMic: 2
+    },
+
+    /* =================================================================
+       MEROPENEM — Li et al. 2006
+       Two-compartment, 79 hospitalised adults (18-93 y).
+       Table II, final model:
+         CL (L/h) = 14.60 x (CLCR/83)^0.62 x (Age/35)^(-0.34)
+         V1 (L)   = 10.80 x (WT/70)^0.99
+         Q = 18.60 L/h,  V2 = 12.6 L
+       Interindividual variability is tabulated as VARIANCES (omega^2):
+         CL 0.118, V1 0.143, Q 0.290, V2 0.102
+       -> omegas are the square roots: 0.344, 0.378, 0.539, 0.319.
+       Residual error is likewise tabulated as variances:
+         sigma1^2 = 0.0352 (proportional) -> SD 0.188 = 18.8%
+         sigma2^2 = 0.220  (additive)     -> SD 0.469 mg/L
+       Targets in the paper: 20% fT>MIC bacteriostatic, 40% bactericidal.
+       ================================================================= */
+    {
+      id: 'mem_li2006',
+      drug: 'Meropenem',
+      label: 'Li 2006 \u2014 2-cmt, hospitalised adults',
+      source: 'Li C, Kuti JL, Nightingale CH, Nicolau DP. J Clin Pharmacol ' +
+              '2006;46:1171-1178, Table II.',
+      doi: '10.1177/0091270006291035',
+      ncmt: 2,
+      matrix: 'total plasma',
+      fu: 0.98,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr'],
+      params: function (c) {
+        var crcl = Math.max(5, c.crcl), age = Math.max(18, c.age);
+        return {
+          CL: 14.60 * Math.pow(crcl / 83, 0.62) * Math.pow(age / 35, -0.34),
+          V1: 10.80 * Math.pow(c.wt / 70, 0.99),
+          Q: 18.60,
+          V2: 12.6
+        };
+      },
+      // Square roots of the published omega^2 values.
+      iiv: { CL: Math.sqrt(0.118), V1: Math.sqrt(0.143),
+             Q: Math.sqrt(0.290), V2: Math.sqrt(0.102) },
+      iivScale: 'omega',
+      err: { add: Math.sqrt(0.220), prop: Math.sqrt(0.0352) },
+      bayesian: true,
+      note: 'General hospitalised adults, not a critical-care model \u2014 ' +
+            'the counterpart to the ICU models here. Age is a covariate ' +
+            'on clearance in its own right (exponent \u22120.34, centred at ' +
+            '35 y) as well as entering Cockcroft-Gault. Variability and ' +
+            'residual error are published as VARIANCES and are entered ' +
+            'here as their square roots. Free fraction 0.98 (meropenem ' +
+            'is ~2% protein bound); the paper simulated free drug.',
+      targets: MERO_TARGETS_LI,
+      defaultRegimen: { dose: 1000, tau: 8, tinf: 0.5 },
+      defaultMic: 4
+    },
+
+    /* =================================================================
+       MEROPENEM — Ehmann et al. 2019
+       Two-compartment, 41 critically ill adults NOT on CRRT.
+       Table 2 (final model estimates), reference patient = median of the
+       first study day: CLcr(CG) 80.8 mL/min, WT 70 kg, albumin 2.8 g/dL.
+         CL 9.25 L/h,  V1 7.89 L,  Q 28.4 L/h,  V2 16.1 L
+         CLCRCG_CL  0.00977  (linear effect on CL up to an inflection)
+         CLCRCG_INF 154 mL/min (inflection point; above it CL plateaus)
+         WT_V1      0.945   (power)
+         ALB_V2     -0.202  (linear)
+       IIV as %CV: CL 27.1, V1 31.5, V2 16.9. Interoccasion variability
+       on CL (12.5 %CV) is NOT implemented — it is within-patient
+       variation between infusions, not between-patient.
+       Residual: proportional 16.6 %CV, additive 0.246 mg/L.
+       ================================================================= */
+    {
+      id: 'mem_ehmann2019',
+      drug: 'Meropenem',
+      label: 'Ehmann 2019 \u2014 2-cmt, critically ill, non-CRRT',
+      source: 'Ehmann L, Zoller M, Minichmayr IK, et al. Int J Antimicrob ' +
+              'Agents 2019;54:309-317, Table 2.',
+      doi: '10.1016/j.ijantimicag.2019.06.016',
+      ncmt: 2,
+      matrix: 'total plasma',
+      fu: 0.98,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr', 'alb'],
+      params: function (c) {
+        // Piecewise linear in CLcr: proportional change per mL/min from
+        // the reference 80.8, flattening at the published inflection of
+        // 154 mL/min.
+        var crcl = Math.min(Math.max(5, c.crcl), 154),
+            alb = (c.alb > 0 ? c.alb : 2.8);
+        return {
+          CL: Math.max(0.2, 9.25 * (1 + 0.00977 * (crcl - 80.8))),
+          V1: 7.89 * Math.pow(c.wt / 70, 0.945),
+          Q: 28.4,
+          V2: Math.max(1, 16.1 * (1 - 0.202 * (alb - 2.8)))
+        };
+      },
+      iiv: { CL: 0.271, V1: 0.315, V2: 0.169 },
+      iivScale: 'cv',
+      err: { add: 0.246, prop: 0.166 },
+      bayesian: true,
+      note: 'Clearance rises linearly with Cockcroft-Gault CLcr up to an ' +
+            'inflection point of 154 mL/min and is flat above it \u2014 the ' +
+            'paper treats that region as extrapolation beyond its data. ' +
+            'Serum albumin acts on the PERIPHERAL volume (lower albumin ' +
+            '\u2192 larger V2). Built on non-CRRT patients only. ' +
+            'CAVEAT: the covariate EQUATIONS are given in an appendix ' +
+            'that is not part of the article PDF; only their forms are ' +
+            'stated in the main text (piecewise linear, power, linear). ' +
+            'The proportional forms coded here reproduce the reference ' +
+            'clearance of 9.25 L/h and the paper\u2019s reported attainment ' +
+            'pattern across CLcr, but the exact appendix parameterisation ' +
+            'has not been read. Interoccasion variability (12.5 %CV on ' +
+            'CL) is not implemented.',
+      targets: MERO_TARGETS_EH,
+      defaultRegimen: { dose: 1000, tau: 8, tinf: 0.5 },
+      defaultMic: 2
+    },
+
+    /* =================================================================
+       PIPERACILLIN — Klastrup et al. 2020
+       One-compartment, 78 critically ill adults on CONTINUOUS infusion,
+       fitted to UNBOUND (free) piperacillin (so fu = 1 here).
+       Table 2: CLtotal = (CLother + theta_CRCL-COV x CRCL) x exp(eta)
+         CLother 2.25 L/h (nonrenal), theta_CRCL-COV 0.119 per mL/min,
+         Vc 35.8 L, IIV on CL 57.4 %CV, proportional residual error 22.6%.
+       No IIV was reported on Vc.
+       ================================================================= */
+    {
+      id: 'pip_klastrup2020',
+      drug: 'Piperacillin',
+      label: 'Klastrup 2020 \u2014 1-cmt, unbound, continuous infusion',
+      source: 'Klastrup V, Thorsted A, Storgaard M, et al. Antimicrob ' +
+              'Agents Chemother 2020;64(7):e02556-19, Table 2.',
+      doi: '10.1128/AAC.02556-19',
+      ncmt: 1,
+      matrix: 'unbound plasma',
+      fu: 1.0,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr'],
+      params: function (c) {
+        // Clearance is split into a nonrenal constant plus a renal term
+        // scaled directly to CLcr — an ADDITIVE intercept, not a power
+        // model, so clearance stays finite as renal function approaches
+        // zero.
+        return {
+          CL: 2.25 + 0.119 * Math.max(0, c.crcl),
+          V1: 35.8
+        };
+      },
+      iiv: { CL: 0.574 },
+      iivScale: 'cv',
+      err: { add: 0, prop: 0.226 },
+      bayesian: true,
+      note: 'Developed in patients receiving CONTINUOUS infusion, so it ' +
+            'is the model to use for that mode. Fitted to unbound ' +
+            'concentrations: no protein-binding correction is applied. ' +
+            'One-compartment, so there is no distribution phase \u2014 with ' +
+            'continuous infusion that matters little, but bolus peaks ' +
+            'from an intermittent regimen will be smoothed. Clearance ' +
+            'has a nonrenal floor of 2.25 L/h. Variability was reported ' +
+            'on clearance only.',
+      targets: [T_FT100, T_FT100x4, T_FT50],
+      defaultRegimen: { mode: 'ci', dose24: 12000 },
+      defaultMic: 16
+    },
+
+    /* =================================================================
+       CEFEPIME — Nicasio et al. 2009
+       Two-compartment NONPARAMETRIC model, 26 critically ill adults with
+       ventilator-associated pneumonia. Parameterised as micro-constants.
+       Final model (text): K10 = 0.071 + 0.0027 x CLCR (h^-1),
+                           V1  = 0.206 L/kg x TBW
+       Table 2 medians: Ki 0.071, KS 0.0027, K12 0.78, K21 0.472,
+                        V1 0.206 L/kg
+       Table 3 gives the full lower-triangular COVARIANCE matrix, which is
+       what makes Monte Carlo possible for a nonparametric model; its
+       diagonal reproduces the tabulated SDs (e.g. sqrt(0.0037) = 0.061
+       against a reported SD of 0.06).
+       Protein binding 15% was applied in the paper's own simulations.
+       ================================================================= */
+    {
+      id: 'cef_nicasio2009',
+      drug: 'Cefepime',
+      label: 'Nicasio 2009 \u2014 2-cmt nonparametric, VAP',
+      source: 'Nicasio AM, Ariano RE, Zelenitsky SA, et al. Antimicrob ' +
+              'Agents Chemother 2009;53:1476-1481, Tables 2 and 3.',
+      doi: '10.1128/AAC.01141-08',
+      ncmt: 2,
+      matrix: 'total plasma',
+      fu: 0.85,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr'],
+      params: function (c) {
+        return microToMacro([0.071, 0.0027, 0.78, 0.472, 0.206], c);
+      },
+      // Nonparametric: a full covariance matrix on the natural scale,
+      // not a diagonal log-normal OMEGA.
+      sampling: 'mvnorm',
+      mvKeys: ['Ki', 'KS', 'K12', 'K21', 'V1kg'],
+      mvMean: [0.071, 0.0027, 0.78, 0.472, 0.206],
+      mvCov: [
+        [ 0.0037, -0.0001, -0.0370, -0.0136,  0.0026],
+        [-0.0001,  0.0001,  0.0008, -0.0015, -0.0011],
+        [-0.0370,  0.0008,  1.0466,  0.7208, -0.0455],
+        [-0.0136, -0.0015,  0.7208,  1.1717,  0.0346],
+        [ 0.0026, -0.0011, -0.0455,  0.0346,  0.0348]
+      ],
+      paramsFromDraw: function (d, c) { return microToMacro(d, c); },
+      iiv: {},
+      bayesian: false,
+      bayesianNote: 'MAP forecasting is disabled for this model. Its ' +
+            'variability is a full covariance matrix on natural-scale ' +
+            'micro-constants from a nonparametric fit, not the diagonal ' +
+            'log-normal OMEGA the MAP prior here assumes, and no residual ' +
+            'error model is published. Monte Carlo target attainment is ' +
+            'unaffected \u2014 it uses the covariance matrix directly, which ' +
+            'is how the paper itself simulated.',
+      note: 'Nonparametric model: the population is sampled from the ' +
+            'published median vector and covariance matrix (Tables 2 and ' +
+            '3) on the NATURAL scale, which is the method the paper used. ' +
+            'Two consequences to keep in view. First, normal-scale draws ' +
+            'can be non-physical \u2014 K12 has a median of 0.78 against an SD ' +
+            'of 1.023 \u2014 so draws with a non-positive rate constant or ' +
+            'volume are rejected and redrawn; the rejected fraction is ' +
+            'reported beneath the plot, and a truncated normal is no ' +
+            'longer exactly the nonparametric distribution that was ' +
+            'fitted. Second, the underlying distribution is skewed ' +
+            '(mean K12 1.337 vs median 0.78), so the population is not ' +
+            'symmetric about the typical patient. Free fraction 0.85 ' +
+            '(15% protein binding), as applied in the paper.',
+      targets: [T_FT50, T_FT100, T_FT60, T_FT100x4],
+      defaultRegimen: { dose: 2000, tau: 8, tinf: 3 },
+      defaultMic: 8
     }
   ];
 
   /* Models documented but NOT implemented, with the reason. Shown in the
      app so the omission is visible rather than silent. */
-  var PENDING = [
-    { drug: 'Cefepime',
-      label: 'Nicasio 2009 — 2-cmt, VAP, nonparametric',
-      doi: '10.1128/AAC.01141-08',
-      reason: 'Structural model recovered (K10 = 0.0027\u00b7CLcr + 0.071 h\u207b\u00b9, ' +
-              'V1 = 0.21 L/kg\u00b7TBW, K12 0.780, K21 0.472 h\u207b\u00b9) but the ' +
-              'nonparametric support points / parameter dispersion needed ' +
-              'for Monte Carlo simulation were not in the retrievable record.' },
-    { drug: 'Meropenem',
-      label: 'Li 2006 — 2-cmt, hospitalised adults',
-      doi: '10.1177/0091270006291035',
-      reason: 'Requested but not implemented: the article is closed access ' +
-              'and no repository copy was retrievable, so the parameter ' +
-              'table could not be read. The abstract establishes a 2-cmt ' +
-              'model in 79 patients with creatinine clearance, age and ' +
-              'weight as covariates, but abstract-level detail cannot ' +
-              'support simulation. Supply the PDF and it can be added.' },
-    { drug: 'Meropenem',
-      label: 'Ehmann 2019 — 2-cmt, critically ill, dosing algorithm',
-      doi: '10.1016/j.ijantimicag.2019.06.016',
-      reason: 'Requested but not implemented: closed access, no repository ' +
-              'copy retrievable. The abstract gives the covariate ' +
-              'structure (Cockcroft-Gault CLcr on clearance; body weight ' +
-              'on central and albumin on peripheral volume) but no ' +
-              'estimates. The companion open-access paper from the same ' +
-              'cohort (doi 10.1186/s13054-017-1829-4) is a target ' +
-              'non-attainment risk analysis and contains no popPK ' +
-              'parameter table. Supply the PDF and it can be added.' },
-    { drug: 'Piperacillin',
-      label: 'Klastrup 2020 — continuous infusion',
-      doi: '10.1128/AAC.02556-19',
-      reason: 'Best-performing model for continuous infusion in the 2023 ' +
-              'external evaluation, but only the abstract was retrievable; ' +
-              'parameter table not obtained.' }
-  ];
+  /* Models documented but NOT implemented, with the reason. Shown in the
+     app so an omission is visible rather than silent.
+
+     Currently empty: every model previously listed here was unblocked
+     when the source PDFs were supplied, and all four are now implemented
+     from their own parameter tables. Keep this mechanism in place — the
+     next model that cannot be faithfully reproduced belongs here rather
+     than being approximated. */
+  var PENDING = [];
 
   var PRESETS = [
     { id: 'pip-ei', label: 'Piperacillin: standard vs extended infusion',
@@ -462,6 +697,30 @@
         { label: '6 g/24 h CI', mode: 'ci', dose24: 6000 }
       ],
       cov: { wt: 75, age: 42, sex: 'M', scr: 0.6, scrUnit: 'mg/dL' }, mic: 2 },
+    { id: 'cef-vap', label: 'Cefepime: prolonged infusion in VAP',
+      model: 'cef_nicasio2009', target: 'ft50',
+      regimens: [
+        { label: '2 g q8h, 0.5 h', dose: 2000, tau: 8, tinf: 0.5 },
+        { label: '2 g q8h, 3 h', dose: 2000, tau: 8, tinf: 3 },
+        { label: '6 g/24 h CI', mode: 'ci', dose24: 6000 }
+      ],
+      cov: { wt: 84, age: 57, sex: 'M', scr: 0.9, scrUnit: 'mg/dL' }, mic: 8 },
+    { id: 'mem-ward', label: 'Meropenem: ward patient vs ICU model',
+      model: 'mem_li2006', target: 'ft40',
+      regimens: [
+        { label: '1 g q8h, 0.5 h', dose: 1000, tau: 8, tinf: 0.5 },
+        { label: '1 g q8h, 3 h', dose: 1000, tau: 8, tinf: 3 },
+        { label: '2 g q8h, 3 h', dose: 2000, tau: 8, tinf: 3 }
+      ],
+      cov: { wt: 70, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' }, mic: 4 },
+    { id: 'pip-ci', label: 'Piperacillin: continuous infusion dose finding',
+      model: 'pip_klastrup2020', target: 'ft100',
+      regimens: [
+        { label: '8 g/24 h CI', mode: 'ci', dose24: 8000 },
+        { label: '12 g/24 h CI', mode: 'ci', dose24: 12000 },
+        { label: '16 g/24 h CI', mode: 'ci', dose24: 16000 }
+      ],
+      cov: { wt: 80, age: 62, sex: 'M', scr: 1.1, scrUnit: 'mg/dL' }, mic: 16 },
     { id: 'van-auc', label: 'Vancomycin: AUC 400\u2013600 attainment',
       model: 'van_thomson2009', target: 'auc400',
       regimens: [

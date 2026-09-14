@@ -59,58 +59,36 @@ finding — so adding one would contradict the source.
 
 ### Deliberate omissions, stated in the app
 
-- **Cefepime — Nicasio 2009.** The structural model is recoverable
-  (K<sub>10</sub> = 0.0027·CLcr + 0.071 h⁻¹, V<sub>1</sub> = 0.21 L/kg·TBW,
-  K<sub>12</sub> 0.780, K<sub>21</sub> 0.472 h⁻¹) but it is a nonparametric
-  model and the support points / parameter dispersion needed to simulate a
-  population were not in the retrievable record.
-- **Piperacillin — Klastrup 2020**, best for continuous infusion in the 2023
-  evaluation: only the abstract was retrievable, so no parameter table.
-- **Udy 2015 Bayesian forecasting.** The paper's residual-error row reports
-  `RUV (%CV) 1.0` next to `RUV (SD) 0.3 mg/L`. The scale of the proportional
-  term is ambiguous, and a wrong residual variance silently distorts how
-  strongly TDM samples outweigh the prior. Monte Carlo PTA is unaffected —
-  it needs only the fixed effects and BSV, which is how the paper itself
-  used the model — so PTA is enabled and MAP is not.
+**No model is omitted.** The Li 2006 and Ehmann 2019 meropenem models, the
+Klastrup 2020 piperacillin model and the Nicasio 2009 cefepime model were
+each listed here as unavailable until their PDFs were supplied; all four
+are now implemented from their own parameter tables, and `PENDING` is
+empty. The mechanism stays in place — a model that cannot be faithfully
+reproduced belongs in `PENDING` rather than being approximated, and the
+app renders that list (stating that none remain when it is empty).
 
-- **Meropenem — Li 2006** ([10.1177/0091270006291035](https://doi.org/10.1177/0091270006291035)):
-  closed access, no repository copy retrievable. The abstract establishes a
-  2-compartment model in 79 patients with creatinine clearance, age and
-  weight as covariates, but no estimates.
-- **Meropenem — Ehmann 2019** ([10.1016/j.ijantimicag.2019.06.016](https://doi.org/10.1016/j.ijantimicag.2019.06.016)):
-  closed access, no repository copy. The abstract gives the covariate
-  structure (Cockcroft-Gault CLcr on clearance, weight on central and
-  albumin on peripheral volume) but no estimates. The open-access companion
-  paper from the same cohort ([10.1186/s13054-017-1829-4](https://doi.org/10.1186/s13054-017-1829-4))
-  is a target non-attainment risk analysis and contains no popPK parameter
-  table; the dosing-nomogram paper from the same group
-  ([10.1093/jac/dkx526](https://doi.org/10.1093/jac/dkx526)) is also
-  paywalled.
+Two narrower gaps remain, both surfaced in the app rather than silent:
 
-**Both are one PDF away.** Drop either paper in and the model can be added
-— the schema below is all that is needed.
+- **Udy 2015 — Bayesian forecasting only.** The paper's residual-error row
+  reports `RUV (%CV) 1.0` next to `RUV (SD) 0.3 mg/L`. The scale of the
+  proportional term is ambiguous, and a wrong residual variance silently
+  distorts how strongly TDM samples outweigh the prior. Monte Carlo PTA is
+  unaffected — it needs only the fixed effects and BSV, which is how the
+  paper itself used the model — so PTA is enabled and MAP is not.
+- **Nicasio 2009 — Bayesian forecasting only.** Its prior is a full
+  covariance matrix on natural-scale micro-constants, not the diagonal
+  log-normal Ω the MAP implementation assumes, and no residual error model
+  is published. PTA uses the covariance matrix directly, which is how the
+  paper simulated.
 
-### A caveat that is not mine: Shekar 2014 is internally inconsistent
-
-Worth knowing before you teach from it. The paper's Table 3 tabulates
-simulated trough concentrations by CLcr, and its CLcr-banded dosing advice
-(500 mg q8h at CLcr 20–50, 1 g at 80–180, 2 g above 180) is drawn from
-that table. Inverting Table 3 — solving for the clearance that reproduces
-each published trough, holding the published V<sub>c</sub>/V<sub>p</sub>/Q
-fixed — gives clearances of only **2.4 to 5.5 L/h** across CLcr 20–180.
-That contradicts the same paper's *measured* clearances of 7.9 ± 5.9 (ECMO)
-and 11.7 ± 6.5 L/h (controls), and it cannot be produced by the paper's own
-Table 2 equation under any unit reading. Its 1 g column is additionally not
-dose-proportional to its 500 mg and 2 g columns, which are proportional to
-each other.
-
-What is implemented here is the published **equation**, because that is what
-reproduces the measured clearances: CL = 1.89 × CLcr in L/h gives 11.3 L/h
-at CLcr 100 and 7.9 L/h at CLcr 70, matching the two reported cohort means
-almost exactly. The consequence is that **this model does not reproduce that
-paper's dosing table** — it predicts markedly lower attainment at high CLcr.
-`validate.cjs` asserts the inconsistency rather than the agreement, so the
-discrepancy is regression-tested instead of being quietly tuned away.
+One model is implemented with a stated gap: **Ehmann 2019's covariate
+equations live in an appendix that is not part of the article PDF.** The
+main text states their forms (piecewise linear in CLcr with an inflection
+at 154 mL/min, a power function of weight, linear in albumin) and Table 2
+gives the coefficients, but the exact appendix parameterisation was not
+read. The proportional forms coded here reproduce the reference clearance
+of 9.25 L/h and track the paper's own Table 3A attainment across CLcr to
+within 10 percentage points.
 
 **`Q` in the Thomson model** is tabulated as `2.28` with a unit label of
 h⁻¹ while the table key defines Q as intercompartmental *clearance*. It is
@@ -235,8 +213,8 @@ patient, regimens, target, MIC and seed.
 | Parameter | Meaning |
 |---|---|
 | `mode` | `widget` for the compact slide layout; omit for the full app |
-| `model` | `pip_kim2022`, `pip_udy2015`, `van_thomson2009`, `mem_gijsen2021`, `mem_shekar2014`, `mem_ojeanson2021` |
-| `target` | `ft40`, `ft50`, `ft100`, `ft100x4`, `auc400`, `aucmic400`, `cmin1020` |
+| `model` | `van_thomson2009`, `pip_kim2022`, `pip_udy2015`, `pip_klastrup2020`, `mem_gijsen2021`, `mem_shekar2014`, `mem_ojeanson2021`, `mem_li2006`, `mem_ehmann2019`, `cef_nicasio2009` |
+| `target` | `ft20`, `ft40`, `ft50`, `ft98`, `ft98x4`, `ft100`, `ft100x4`, `auc400`, `aucmic400`, `cmin1020` |
 | `mic` | reference MIC in mg/L |
 | `dose`, `tau`, `tinf` | regimen A: mg, hours, infusion hours |
 | `dose2`,`tau2`,`tinf2` / `dose3`,`tau3`,`tinf3` | regimens B and C for comparison |
@@ -245,10 +223,15 @@ patient, regimens, target, MIC and seed.
 | `scr`, `scrUnit` | serum creatinine; `mg/dL` or `umol/L` |
 | `cysc` | cystatin C in mg/L (Kim model) |
 | `crcl` / `egfr` | set renal function directly; the underlying creatinine or cystatin C is back-solved |
+| `ndoses` | doses given (default: auto, dosed out to steady state) |
+| `evaldose` | which dose interval the target is evaluated over (default: last) |
+| `whole` | `1` to plot the whole course instead of one interval |
+| `bayes` | `0` to switch Bayesian forecasting off (default on) |
 | `ecmo` | `1` for ECMO (Kim model) |
 | `rrt` | `1` for continuous RRT (Shekar model) |
 | `dialysis` | `none`, `cont`, `semicont` (O'Jeanson model) |
 | `rd` | residual diuresis in mL/24 h (O'Jeanson model; 845 = cohort median) |
+| `alb` | serum albumin in g/dL (Ehmann model; 2.8 = cohort median) |
 | `n`, `seed` | Monte Carlo subjects and RNG seed |
 | `pta` | PTA threshold %, default 90 |
 | `logy` | `1` for a log concentration axis |
@@ -325,6 +308,137 @@ are total-drug AUC, as the guidelines define them.
   you teach from it.
 
 ---
+| Meropenem | **Li 2006** ([10.1177/0091270006291035](https://doi.org/10.1177/0091270006291035)) | 2-cmt, total plasma (f<sub>u</sub> 0.98) | CLcr **and age** on CL; weight on V<sub>1</sub> | 20% / 40% *f*T>MIC (the paper's bacteriostatic and bactericidal targets) |
+| Meropenem | **Ehmann 2019** ([10.1016/j.ijantimicag.2019.06.016](https://doi.org/10.1016/j.ijantimicag.2019.06.016)) | 2-cmt, total plasma (f<sub>u</sub> 0.98) | CLcr piecewise-linear on CL to an inflection at 154 mL/min; weight on V<sub>1</sub>; **albumin on V<sub>2</sub>** | 98% *f*T>MIC, 98% *f*T>4×MIC |
+| Piperacillin | **Klastrup 2020** ([10.1128/AAC.02556-19](https://doi.org/10.1128/AAC.02556-19)) | 1-cmt, **unbound** | CL = 2.25 + 0.119 × CRCL (nonrenal floor + renal term) | 100% *f*T>MIC, 100% *f*T>4×MIC |
+| Cefepime | **Nicasio 2009** ([10.1128/AAC.01141-08](https://doi.org/10.1128/AAC.01141-08)) | 2-cmt **nonparametric**, total plasma (f<sub>u</sub> 0.85) | K10 = 0.071 + 0.0027 × CLcr; V<sub>1</sub> = 0.206 L/kg | 50% *f*T>MIC |
+
+### Nonparametric models
+
+Nicasio 2009 is not a NONMEM-style model: it publishes micro-constants
+(K10, K12, K21, V<sub>1</sub>) with a **full covariance matrix** on the
+natural scale rather than a diagonal log-normal Ω. The engine supports
+this through `sampling: 'mvnorm'` — draws are taken from the published
+median vector and covariance via Cholesky factorisation, then mapped to
+CL/V<sub>1</sub>/Q/V<sub>2</sub> (CL = K10·V<sub>1</sub>,
+Q = K12·V<sub>1</sub>, V<sub>2</sub> = Q/K21, exact identities).
+
+Two honest caveats, both surfaced in the app rather than buried:
+
+- Normal-scale draws can be **non-physical** (K12 has a median of 0.78
+  against an SD of 1.023), so draws with a non-positive rate constant or
+  volume are rejected and redrawn. At typical settings **about 70% of
+  draws are rejected**, and the resulting truncated normal is no longer
+  exactly the nonparametric distribution that was fitted. The rejected
+  fraction is printed beneath the plot.
+- MAP forecasting is disabled for this model: its prior is not the
+  diagonal log-normal Ω the MAP implementation assumes, and no residual
+  error model is published.
+
+### What PTA here is conditional on
+
+This tool computes attainment for **the patient whose covariates you
+enter**, varying only the between-subject random effects. Several source
+papers instead resample the covariate distribution of their whole cohort.
+The difference is visible with Li 2006: its equations are reproduced
+exactly (CL = 14.600 L/h at the reference covariates, V<sub>1</sub> =
+10.80 L at 70 kg), and its conclusion is reproduced (a 3 h infusion beats
+0.5 h), but the published 64% → 90% pair cannot be matched at *any single
+covariate point* — `validate.cjs` asserts that it cannot. A mixture over
+a heterogeneous cohort flattens the PTA curve in a way no individual
+patient reproduces. That is a property of the two questions being
+different, not an error in either.
+
+## Which covariates does the selected model use?
+
+Each model declares the inputs it needs, so the form changes when you
+change model: albumin appears only for Ehmann, the dialysis-modality
+select and residual diuresis only for O'Jeanson, the RRT checkbox only
+for Shekar, cystatin C only for Kim.
+
+But knowing which fields to *show* is not the same as knowing what each
+one *does*, so the app works that out by **perturbing each covariate and
+re-evaluating the model's own `params()` function**. Every input is
+labelled with the parameters it actually moves, and the sidebar prints a
+one-line summary:
+
+| Model | Detected effects |
+|---|---|
+| Li 2006 | Weight → CL/V₁ · Age → CL · Sex → CL · Creatinine → CL |
+| Ehmann 2019 | Weight → CL/V₁ · Age → CL · Sex → CL · Creatinine → CL · **Albumin → V₂** |
+| Shekar 2014 | Weight → **CL only** · Age → CL · Sex → CL · Creatinine → CL · RRT → CL |
+| O'Jeanson 2021 | Age → CL · Sex → CL · Creatinine → CL · Residual diuresis → CL · Dialysis modality → CL |
+| Nicasio 2009 | Weight → **CL/V₁/Q/V₂** · Age → CL · Sex → CL · Creatinine → CL |
+
+Detection rather than a hand-written list, for two reasons. It
+distinguishes cases the form cannot: weight scales a volume for Li and
+Nicasio but for Shekar and Klastrup only enters through Cockcroft-Gault,
+and O'Jeanson ignores weight entirely because MDRD does not use it. And
+it is **conditional on the current settings**, so an input that stops
+mattering is marked *no effect* — select semi-continuous (intermittent)
+dialysis under O'Jeanson and both creatinine and residual diuresis grey
+out, because that branch fixes clearance at 11.0 L/h independently of
+GFR and diuresis. Continuous dialysis keeps the diuresis term.
+
+The failure mode this guards against is a model that *uses* a covariate
+its list forgot to *declare*: the input would stay hidden while silently
+affecting results. `test-app.cjs` asserts, for every model, that nothing
+with a detected effect is hidden from the form.
+
+### Hypoalbuminaemia and renal replacement
+
+These are model choices, not just field entries. Albumin only acts where
+a model estimated it (Ehmann, on V₂ — lower albumin, larger peripheral
+volume). For renal replacement, pick the model built in that population:
+Shekar for continuous RRT, O'Jeanson for intermittent or continuous
+dialysis. Ehmann was built on **non-CRRT patients only**, so entering a
+dialysis scenario there is outside its data — the model note says so.
+
+## Turning Bayesian forecasting off
+
+The TDM panel has an **Enable Bayesian forecasting** switch. Off, the
+individual forecast is removed from the plot and legend and the panel
+body is disabled, leaving the population prediction alone; the fit is
+kept, so switching back on restores it without re-running MAP. The state
+is carried in the embed URL as `bayes=0`, which is the useful part for
+teaching: put the population-only and forecast-added versions of the same
+patient on consecutive slides.
+
+For models where forecasting is unavailable — Udy 2015 and Nicasio 2009,
+each for a documented reason — the switch is disabled and labelled
+*unavailable for this model* rather than silently doing nothing.
+
+## The dosing course: first dose vs steady state
+
+Target attainment is conventionally reported at steady state, and that is
+the default here — the schedule is dosed out until the profile has
+stabilised (`dosesToSteadyState()`, 5 half-lives, per simulated patient's
+own parameters). But "does the first dose attain the target" is a
+different and clinically real question, and the two answers diverge for
+any drug that accumulates.
+
+Three controls in the **Dosing course** card:
+
+- **Doses given** — blank means auto (out to steady state). Set it to
+  simulate a short course.
+- **Evaluate dose #** — blank means the last interval. Set `1` to ask what
+  the first dose achieves.
+- **Plot whole course** — display only. The concentration–time plot spans
+  from the first dose instead of one interval, with the evaluated interval
+  marked by dashed lines so the reported numbers are traceable to the
+  picture. **The metrics do not change when this is toggled** — it alters
+  the plot window, never the evaluation window.
+
+Worked example (Gijsen meropenem, 1 g q8h 0.5 h, eGFR 105, MIC 2, 100%
+fT>MIC): this patient needs 4 doses to reach steady state, and PTA goes
+from **5.3% on dose 1 to 30.9% at steady state**, with the median trough
+rising 0.00 → 1.28 mg/L. That gap is the argument for a loading dose, and
+it is invisible if you only ever look at steady state.
+
+The header and the course note state which interval was evaluated and
+whether it is genuinely at steady state — a course too short to have
+reached it is labelled *pre–steady state* rather than silently reported as
+steady state.
 
 ## Scope
 

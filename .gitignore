@@ -25,3 +25,7 @@ handoff/
 
 # transfer bundle of this repo (regenerate: git bundle create mipd-lab.bundle --all)
 *.bundle
+
+# transfer packages built for hand-off (regenerate on demand)
+Dosingapp-files.zip
+upload/

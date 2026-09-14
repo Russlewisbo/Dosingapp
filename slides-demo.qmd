@@ -79,6 +79,18 @@ being that "renal replacement therapy" is not one covariate value.
 
 ---
 
+## Cefepime in VAP: does prolonging the infusion rescue MIC 8? {background-iframe="mipd-lab.html?mode=widget&model=cef_nicasio2009&dose=2000&tau=8&tinf=3&mic=8&target=ft50&n=800&title=Cefepime%202%20g%20q8h%20%E2%80%94%2050%25%20fT%3EMIC" background-interactive="true"}
+
+::: {.notes}
+Nicasio's nonparametric VAP model. Drag the infusion duration from 3 h
+back to 0.5 h and attainment at MIC 8 collapses; this is the comparison
+the paper was built to make. Note the line beneath the plot reporting the
+rejected fraction of covariance draws — a good moment to explain why a
+nonparametric model cannot simply be sampled as a normal.
+:::
+
+---
+
 ## Vancomycin: an AUC target instead
 
 <iframe src="mipd-lab.html?mode=widget&panel=conc&summary=1&model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&n=800&seed=3&title=Vancomycin%201%20g%20q12h%20%E2%80%94%20AUC%20400%E2%80%93600"

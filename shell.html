@@ -110,6 +110,10 @@ body.widget .wstrip > div{min-width:78px}
 body:not(.widget) .wstrip-only{display:none}
 body.widget .full-only{display:none}
 .hidden{display:none !important}
+.eff{font-weight:500;color:var(--c1);letter-spacing:0}
+.eff.off{color:var(--ink3);font-style:italic}
+input.inert,select.inert{background:var(--line2);color:var(--ink3)}
+#tdmBody.off{opacity:.45;pointer-events:none}
 </style>
 </head>
 <body>
@@ -166,11 +170,16 @@ body.widget .full-only{display:none}
           <option value="semicont">Semi-continuous (intermittent)</option>
         </select>
       </div></div>
+      <div id="albBlock" class="row hidden"><div>
+        <label for="alb">Serum albumin (g/dL)</label>
+        <input id="alb" type="number" step="0.1">
+      </div></div>
       <div id="rdBlock" class="row hidden"><div>
         <label for="rd">Residual diuresis (mL/24 h)</label>
         <input id="rd" type="number" step="50">
       </div></div>
       <div id="renalOut"></div>
+      <div id="covEffects" class="cite" style="margin-top:7px"></div>
     </div>
 
     <div class="card">
@@ -179,6 +188,21 @@ body.widget .full-only{display:none}
       <div class="inline" style="margin-top:8px">
         <button class="mini" id="addReg">+ regimen</button>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>Dosing course</h2>
+      <div class="row r2">
+        <div><label for="nDosesIn">Doses given</label>
+          <input id="nDosesIn" type="number" step="1" min="1" placeholder="auto"></div>
+        <div><label for="evalDoseIn">Evaluate dose #</label>
+          <input id="evalDoseIn" type="number" step="1" min="1" placeholder="last"></div>
+      </div>
+      <div class="inline">
+        <input id="plotWhole" type="checkbox">
+        <label for="plotWhole">Plot whole course (show accumulation)</label>
+      </div>
+      <div class="cite" id="courseNote" style="margin-top:6px"></div>
     </div>
 
     <div class="card">
@@ -238,6 +262,10 @@ body.widget .full-only{display:none}
         <div><label for="wMic">MIC (mg/L)</label><input id="wMic" type="number" step="0.25"></div>
         <div><label for="wTarget">Target</label><select id="wTarget"></select></div>
         <div><label for="wRenal" id="wRenalLab">Renal function</label><input id="wRenal" type="number" step="5"></div>
+        <div><label for="wWhole">View</label><select id="wWhole">
+          <option value="0">One interval</option>
+          <option value="1">Whole course</option>
+        </select></div>
       </div>
     </div>
 
@@ -264,6 +292,12 @@ body.widget .full-only{display:none}
     <!-- ============ Bayesian forecasting (full mode) ============ -->
     <div class="card full-only" id="panelTdm">
       <h2>Bayesian forecasting from TDM samples</h2>
+      <div class="inline" style="margin:-2px 0 8px">
+        <input id="bayesOn" type="checkbox" checked>
+        <label for="bayesOn">Enable Bayesian forecasting</label>
+        <span id="bayesState" class="cite" style="margin-left:6px"></span>
+      </div>
+      <div id="tdmBody">
       <p class="sub">Enter measured concentrations with times on the dosing-record
         clock (t = 0 at the first dose of the record). The MAP estimate combines
         these with the model prior.</p>
@@ -282,6 +316,7 @@ body.widget .full-only{display:none}
         <button class="primary" id="runMap">Run MAP estimation</button>
       </div>
       <div id="mapOut" style="margin-top:12px"></div>
+      </div>
     </div>
 
     <p class="cite" id="footer" style="margin-top:14px"></p>

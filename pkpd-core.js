@@ -358,7 +358,56 @@
     return p;
   }
 
+  /* ---- Multivariate-normal sampling on the natural parameter scale ----
+     Nonparametric population models (Pmetrics/NPAG lineage) report a
+     parameter vector plus a full covariance matrix rather than a diagonal
+     log-normal OMEGA, and the parameters are micro-constants, not CL/V.
+     Sampling those requires drawing on the natural scale from the
+     published covariance.
+
+     Normal-scale draws can be non-physical (a negative rate constant), so
+     invalid draws are rejected and redrawn. The rejection fraction is
+     returned, because it is a real departure from the published
+     nonparametric distribution and should be visible rather than hidden:
+     a heavily truncated normal is no longer the distribution the authors
+     fitted. */
+  function sampleMvn(model, cov, n, seed) {
+    var mean = model.mvMean, k = mean.length,
+        L = cholesky(model.mvCov),
+        pool = normals(Math.max(1024, n * k * 4), seed || 12345),
+        pi = 0, batch = 1,
+        out = [], tries = 0, maxTries = n * 200, i, j;
+
+    function z() {
+      if (pi >= pool.length) {
+        pool = normals(Math.max(1024, n * k * 4), (seed || 12345) + 7919 * batch++);
+        pi = 0;
+      }
+      return pool[pi++];
+    }
+
+    while (out.length < n && tries < maxTries) {
+      tries++;
+      var zz = new Array(k), draw = new Array(k);
+      for (i = 0; i < k; i++) zz[i] = z();
+      for (i = 0; i < k; i++) {
+        var e = 0;
+        for (j = 0; j <= i; j++) e += L[i][j] * zz[j];
+        draw[i] = mean[i] + e;
+      }
+      var p = model.paramsFromDraw(draw, cov);
+      if (p && p.CL > 0 && p.V1 > 0 &&
+          (model.ncmt === 1 || (p.Q > 0 && p.V2 > 0))) out.push(p);
+    }
+    // Top up with the typical subject if rejection was pathological, so a
+    // caller always receives n subjects rather than a short array.
+    while (out.length < n) out.push(model.params(cov));
+    out.rejectedFraction = tries > 0 ? 1 - out.length / tries : 0;
+    return out;
+  }
+
   function samplePopulation(model, cov, n, seed) {
+    if (model.sampling === 'mvnorm') return sampleMvn(model, cov, n, seed);
     var cv = iivCov(model), keys = cv.keys, nk = keys.length,
         L = cholesky(cv.S),
         typ = model.params(cov),
@@ -427,13 +476,30 @@
     }
     var sched = buildSchedule(regEff),
         tau = sched.tau,
-        // Evaluation window = last dosing interval (steady state).
-        tA = sched.ci ? Math.max(0, sched.tEnd - 24) : sched.tEnd - tau,
-        tB = sched.tEnd;
+        nd = sched.ci ? 0 : (regEff.nDoses || 1),
+        ssDoses = sched.ci ? 0 : dosesToSteadyState(typ, model.ncmt, tau),
+        // Which dosing interval the PD target is evaluated over. Default
+        // is the last one, which is steady state when the schedule was
+        // dosed out to it. An explicit index evaluates an earlier
+        // interval — "does the FIRST dose attain the target" is a
+        // different and clinically real question from the steady-state
+        // one, and the answer differs for any drug that accumulates.
+        evalK = sched.ci ? 0
+          : Math.min(Math.max(1, (!cfg.evalDose || cfg.evalDose === 'last') ? nd : cfg.evalDose), nd),
+        tA = sched.ci ? Math.max(0, sched.tEnd - 24) : (evalK - 1) * tau,
+        tB = sched.ci ? sched.tEnd : evalK * tau,
+        // The PLOT window is independent of the evaluation window:
+        // showing the whole course makes accumulation visible while the
+        // reported metrics still come from the single evaluated interval.
+        whole = !!cfg.plotWhole && !sched.ci,
+        tPlotA = whole ? 0 : tA,
+        tPlotB = whole ? sched.tEnd : tB;
 
-    // Concentration-time profile grid over the evaluation window.
-    var nT = cfg.nT || 120, times = new Array(nT + 1), i, j;
-    for (i = 0; i <= nT; i++) times[i] = tA + (i * (tB - tA)) / nT;
+    // Concentration-time profile grid over the PLOT window. A whole
+    // course spans many intervals, so it needs a finer grid to keep the
+    // infusion peaks from being sampled away.
+    var nT = cfg.nT || (whole ? 480 : 120), times = new Array(nT + 1), i, j;
+    for (i = 0; i <= nT; i++) times[i] = tPlotA + (i * (tPlotB - tPlotA)) / nT;
 
     var curves = new Array(n), perSubj = new Array(n);
     for (j = 0; j < n; j++) {
@@ -488,6 +554,11 @@
 
     return {
       times: times, tA: tA, tB: tB, tau: tau, schedule: sched,
+      tPlotA: tPlotA, tPlotB: tPlotB, plotWhole: whole,
+      evalDose: evalK, nDoses: nd, dosesToSteadyState: ssDoses,
+      // False when the course is too short for the evaluated interval to
+      // represent steady state — the label must not claim otherwise.
+      atSteadyState: sched.ci ? true : evalK >= ssDoses,
       median: med, lo: lo, hi: hi, typical: typCurve,
       typicalParams: typ,
       pta: pta,
@@ -496,7 +567,8 @@
         auc24: summ('auc24'), fauc24: summ('fauc24'),
         cmin: summ('cmin'), cmax: summ('cmax'), tAbove: summ('tAbove')
       },
-      n: n, micMultiplier: micEff
+      n: n, micMultiplier: micEff,
+      rejectedFraction: subjects.rejectedFraction || 0
     };
   }
 
@@ -675,6 +747,7 @@
     cockcroftGault: cockcroftGault, ckdEpiCr: ckdEpiCr, ckdEpiCysC: ckdEpiCysC,
     mdrd: mdrd, ibwDevine: ibwDevine, scrToMgdl: scrToMgdl,
     iivCov: iivCov, cholesky: cholesky, mahalanobis2: mahalanobis2,
+    sampleMvn: sampleMvn,
     micro2: micro2, infusionResponse: infusionResponse,
     buildSchedule: buildSchedule, concFn: concFn,
     dosesToSteadyState: dosesToSteadyState,

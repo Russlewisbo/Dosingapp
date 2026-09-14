@@ -211,5 +211,61 @@ console.log('\n— three-regimen comparison —');
   ok('three regimens in summary table', rows === 3, `${rows} rows`);
 }
 
+console.log('\n— whole-course view (many more x ticks than one interval) —');
+{
+  const { d } = boot('?model=mem_gijsen2021&dose=1000&tau=8&tinf=0.5&mic=2&target=ft100&whole=1&n=250');
+  audit('whole-course conc', d.getElementById('cvConc'));
+}
+{
+  // Worst case for tick crowding: a long course in the narrow widget width.
+  const { d } = boot('?mode=widget&panel=conc&model=van_thomson2009&target=auc400&mic=1' +
+                     '&dose=1000&tau=12&tinf=1&ndoses=20&whole=1&n=200', 380);
+  audit('narrow 20-dose course', d.getElementById('cvConc'));
+}
+{
+  // Log y-axis over a whole course, where early concentrations are near zero.
+  const { d } = boot('?model=mem_ojeanson2021&dose=1000&tau=8&tinf=0.5&mic=2&target=ft100' +
+                     '&whole=1&logy=1&n=250');
+  audit('whole-course log-y', d.getElementById('cvConc'));
+}
+
+console.log('\n— MAP individual forecast overlay —');
+{
+  /* The overlay was previously excluded from the y-scale, so an
+     individual whose peaks exceed the population band was clipped at the
+     top of the axis. This boots a fit with deliberately high
+     concentrations and audits the resulting geometry. */
+  const { w, d } = boot('?model=van_thomson2009&target=auc400&mic=1' +
+                        '&dose=1000&tau=12&tinf=1&n=200');
+  d.getElementById('tdmDose').value = '1000';
+  d.getElementById('tdmTau').value = '12';
+  d.getElementById('tdmTinf').value = '1';
+  d.getElementById('tdmN').value = '4';
+  d.getElementById('addTdm').dispatchEvent(new w.Event('click', { bubbles: true }));
+  const setRow = (i, t, c) => {
+    const inp = d.querySelectorAll('#tdmRows tr')[i].querySelectorAll('input');
+    inp[0].value = String(t); inp[0].dispatchEvent(new w.Event('input', { bubbles: true }));
+    inp[1].value = String(c); inp[1].dispatchEvent(new w.Event('input', { bubbles: true }));
+  };
+  setRow(0, 25, 55);
+  setRow(1, 35, 34);
+  d.getElementById('runMap').dispatchEvent(new w.Event('click', { bubbles: true }));
+  ok('MAP fit produced an individual estimate',
+     /CL/.test(d.getElementById('mapOut').textContent));
+  audit('MAP overlay, one interval', d.getElementById('cvConc'));
+
+  const pw = d.getElementById('plotWhole');
+  pw.checked = true;
+  pw.dispatchEvent(new w.Event('change', { bubbles: true }));
+  audit('MAP overlay, whole course', d.getElementById('cvConc'));
+}
+
+console.log('\n— newly added models —');
+['mem_li2006', 'mem_ehmann2019', 'pip_klastrup2020', 'cef_nicasio2009'].forEach(id => {
+  const { d } = boot('?model=' + id + '&n=200');
+  audit(id + ' conc', d.getElementById('cvConc'));
+  audit(id + ' pta', d.getElementById('cvPta'));
+});
+
 console.log(fails === 0 ? '\nLAYOUT AUDIT PASSED' : `\n${fails} LAYOUT CHECK(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

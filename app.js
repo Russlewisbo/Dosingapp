@@ -41,6 +41,13 @@
     n: num(Q.n, WIDGET ? 600 : 1000),
     seed: num(Q.seed, 20250101),
     logy: bool(Q.logy, false),
+    // null = dose out to steady state automatically
+    nDoses: Q.ndoses ? Math.max(1, num(Q.ndoses, 0)) : null,
+    evalDose: Q.evaldose ? Math.max(1, num(Q.evaldose, 0)) : null,
+    plotWhole: bool(Q.whole, false),
+    // Bayesian forecasting is on by default but can be switched off,
+    // which hides the overlay without discarding the fit.
+    bayes: bool(Q.bayes, true),
     cov: {}
   };
 
@@ -164,6 +171,9 @@
   Plot.prototype.hline = function (y, color, w, dash) {
     this.line([this.x0, this.x1], [y, y], color, w || 1.5, dash || [5, 4]);
   };
+  Plot.prototype.vline = function (x, color, w, dash) {
+    this.line([x, x], [this.y0, this.y1], color, w || 1.5, dash || [5, 4]);
+  };
   Plot.prototype.points = function (xs, ys, color, r) {
     var g = this.g;
     for (var i = 0; i < xs.length; i++) {
@@ -206,8 +216,8 @@
     ckdepi: 'eGFR (CKD-EPI creatinine)',
     mdrd: 'GFR (MDRD, 4-variable)'
   };
-  function renalOf(m) {
-    var c = S.cov;
+  function renalOf(m, cIn) {
+    var c = cIn || S.cov;
     if (m.renal === 'cysc') {
       return { egfr: P.ckdEpiCysC({ cysc: c.cysc, age: c.age, sex: c.sex }),
                kind: 'cysc' };
@@ -224,10 +234,10 @@
                                       scr: c.scr, scrUnit: c.scrUnit }),
              kind: 'cg' };
   }
-  function covFull() {
-    var m = model(), c = {}, k;
-    for (k in S.cov) if (Object.prototype.hasOwnProperty.call(S.cov, k)) c[k] = S.cov[k];
-    var r = renalOf(m);
+  function covFull(mIn, covIn) {
+    var m = mIn || model(), src = covIn || S.cov, c = {}, k;
+    for (k in src) if (Object.prototype.hasOwnProperty.call(src, k)) c[k] = src[k];
+    var r = renalOf(m, src);
     if (r.crcl != null) c.crcl = r.crcl;
     if (r.egfr != null) c.egfr = r.egfr;
     return c;
@@ -235,6 +245,120 @@
 
   /* Some models carry covariate-dependent IIV (Kim: Vc IIV differs on
      ECMO). Build a per-render shallow clone with the right omegas. */
+  /* ------------------------------------------------------------------
+     Which covariates actually move THIS model's parameters?
+
+     Determined by perturbing each covariate and re-evaluating the
+     model's own params() function, rather than by trusting the
+     hand-written `covariates` list. Two reasons that matters:
+
+       - The declared list says which inputs to SHOW. It cannot say what
+         each one does, and the two drift apart silently. Weight, for
+         example, is entered for every model, but for Udy and Klastrup it
+         only moves Cockcroft-Gault clearance while for Li it also scales
+         the central volume — the user cannot tell those apart from the
+         form.
+       - A covariate a model uses but forgot to declare would be hidden,
+         leaving the user unable to set a value that is silently affecting
+         their results. Detection makes that a testable condition.
+
+     Returns { key: ['CL','V1',...] }, empty array meaning no effect at
+     the CURRENT settings — which is itself informative. In the O'Jeanson
+     model, for instance, semi-continuous (intermittent) dialysis fixes
+     clearance at 11.0 L/h independently of GFR and of residual diuresis,
+     so both of those inputs correctly report no effect under that
+     modality while they do act under continuous dialysis.
+     ------------------------------------------------------------------ */
+  var COV_PROBE = {
+    wt:  function (c) { c.wt = c.wt * 1.25 + 3; },
+    age: function (c) { c.age = Math.min(95, c.age * 1.2 + 5); },
+    ht:  function (c) { c.ht = c.ht + 10; },
+    sex: function (c) { c.sex = c.sex === 'F' ? 'M' : 'F'; },
+    scr: function (c) { c.scr = c.scr * 1.5 + 0.2; },
+    cysc: function (c) { c.cysc = c.cysc * 1.5 + 0.2; },
+    alb: function (c) { c.alb = (c.alb || 2.8) + 1.2; },
+    rd:  function (c) { c.rd = (c.rd || 0) + 900; },
+    ecmo: function (c) { c.ecmo = !c.ecmo; },
+    rrt: function (c) { c.rrt = !c.rrt; },
+    dialysis: function (c) { c.dialysis = c.dialysis === 'cont' ? 'none' : 'cont'; }
+  };
+  var PARAM_KEYS = ['CL', 'V1', 'Q', 'V2'];
+
+  function activeCovariates(m) {
+    var base;
+    try { base = m.params(covFull(m, S.cov)); } catch (e) { return {}; }
+    var out = {};
+    Object.keys(COV_PROBE).forEach(function (k) {
+      var alt = {}, kk;
+      for (kk in S.cov) if (Object.prototype.hasOwnProperty.call(S.cov, kk)) alt[kk] = S.cov[kk];
+      COV_PROBE[k](alt);
+      var p;
+      try { p = m.params(covFull(m, alt)); } catch (e) { p = null; }
+      var hit = [];
+      if (p) {
+        PARAM_KEYS.forEach(function (pk) {
+          if (base[pk] == null && p[pk] == null) return;
+          var a = base[pk] || 0, b = p[pk] || 0;
+          if (Math.abs(a - b) > 1e-9 * Math.max(1, Math.abs(a))) hit.push(pk);
+        });
+      }
+      out[k] = hit;
+    });
+    return out;
+  }
+
+  var COV_LABEL = {
+    wt: 'Weight', age: 'Age', ht: 'Height', sex: 'Sex',
+    scr: 'Creatinine', cysc: 'Cystatin C', alb: 'Albumin',
+    rd: 'Residual diuresis', ecmo: 'ECMO', rrt: 'RRT', dialysis: 'Dialysis modality'
+  };
+  var PARAM_LABEL = { CL: 'CL', V1: 'V\u2081', Q: 'Q', V2: 'V\u2082' };
+
+  /* Write the detected effects next to the inputs, so the form states
+     what each entered value does for the SELECTED model instead of
+     leaving the user to infer it. */
+  function annotateCovariates(m) {
+    var act = activeCovariates(m), host = $('covEffects');
+    LAST_ACTIVE = act;
+
+    Object.keys(COV_PROBE).forEach(function (k) {
+      var el = $(k);
+      if (!el) return;
+      var hit = act[k] || [];
+      el.title = hit.length
+        ? 'Moves ' + hit.map(function (p) { return PARAM_LABEL[p]; }).join(', ') +
+          ' in this model.'
+        : 'Entered, but does not change this model\u2019s parameters at the ' +
+          'current settings.';
+      // A field that does nothing should look like it does nothing.
+      el.classList.toggle('inert', hit.length === 0);
+      var lab = el.parentNode && el.parentNode.querySelector('label');
+      if (lab && COV_LABEL[k]) {
+        var base = lab.getAttribute('data-base') || lab.textContent;
+        lab.setAttribute('data-base', base);
+        lab.innerHTML = base + (hit.length
+          ? ' <span class="eff">\u2192 ' +
+            hit.map(function (p) { return PARAM_LABEL[p]; }).join(', ') + '</span>'
+          : ' <span class="eff off">no effect</span>');
+      }
+    });
+
+    if (host) {
+      var used = Object.keys(act).filter(function (k) { return act[k].length; });
+      host.innerHTML =
+        '<b>Covariates in this model:</b> ' +
+        (used.length
+          ? used.map(function (k) {
+              return COV_LABEL[k] + ' \u2192 ' +
+                act[k].map(function (p) { return PARAM_LABEL[p]; }).join('/');
+            }).join(' &middot; ')
+          : 'none') +
+        '. Renal function is computed with ' +
+        (RENAL_LABEL[(renalOf(m) || {}).kind] || 'Cockcroft-Gault') +
+        ', so creatinine, age, sex and weight can act through it as well as directly.';
+    }
+  }
+
   function modelResolved() {
     var m = model();
     if (typeof m.iivFor !== 'function') return m;
@@ -264,6 +388,12 @@
                     tinf: num(Q.tinf3, d.tinf), on: true });
       }
       return list;
+    }
+    // A model's own default may be a continuous infusion (Klastrup 2020
+    // was developed in patients on CI), in which case there is no dose,
+    // interval or infusion duration to copy.
+    if (d.mode === 'ci') {
+      return [{ label: 'A', mode: 'ci', dose24: d.dose24, on: true }];
     }
     return [{ label: 'A', dose: d.dose, tau: d.tau, tinf: d.tinf, on: true }];
   }
@@ -391,7 +521,10 @@
     if (resetDefaults) {
       S.regimens = [{ label: 'A', dose: m.defaultRegimen.dose, tau: m.defaultRegimen.tau,
                       tinf: m.defaultRegimen.tinf, on: true }];
-      if (m.defaultRegimen.mode === 'ci') S.regimens[0] = { label: 'A', mode: 'ci', dose24: 16000, on: true };
+      if (m.defaultRegimen.mode === 'ci') {
+        S.regimens[0] = { label: 'A', mode: 'ci',
+                          dose24: m.defaultRegimen.dose24, on: true };
+      }
       S.mic = m.defaultMic;
     }
     var usesCysC = m.renal === 'cysc';
@@ -402,12 +535,8 @@
     if ($('rrtBlock')) $('rrtBlock').classList.toggle('hidden', !has('rrt'));
     if ($('dialysisBlock')) $('dialysisBlock').classList.toggle('hidden', !has('dialysis'));
     if ($('rdBlock')) $('rdBlock').classList.toggle('hidden', !has('rd'));
-    // Weight only moves this model's renal estimate, never its volumes.
-    if ($('wt')) {
-      $('wt').title = (m.id === 'mem_shekar2014')
-        ? 'Affects CLcr only: this model applies no weight scaling to volumes.'
-        : '';
-    }
+    if ($('albBlock')) $('albBlock').classList.toggle('hidden', !has('alb'));
+    annotateCovariates(m);
     if ($('modelCite')) {
       $('modelCite').innerHTML = m.source +
         ' &nbsp;<a href="https://doi.org/' + m.doi + '" target="_blank" rel="noopener">doi</a>' +
@@ -420,7 +549,21 @@
       if (m.bayesian === false) n += '<div class="note">' + m.bayesianNote + '</div>';
       $('modelNote').innerHTML = n;
     }
+    // The card stays visible when the user switches forecasting off (so
+    // the switch remains reachable); only its body is disabled. It is
+    // hidden outright when the MODEL cannot support forecasting.
     if ($('panelTdm')) $('panelTdm').classList.toggle('hidden', m.bayesian === false);
+    var bOn = $('bayesOn');
+    if (bOn) {
+      bOn.checked = S.bayes;
+      bOn.disabled = m.bayesian === false;
+    }
+    if ($('tdmBody')) $('tdmBody').classList.toggle('off', !S.bayes);
+    if ($('bayesState')) {
+      $('bayesState').textContent = m.bayesian === false
+        ? 'unavailable for this model'
+        : (S.bayes ? '' : 'off \u2014 population prediction only');
+    }
     fillSelectors();
     renderRegimens();
     if ($('mic')) $('mic').value = S.mic;
@@ -445,20 +588,63 @@
       var reg = r.mode === 'ci'
         ? { mode: 'ci', dose24: r.dose24, duration: 24 * 5 }
         : { dose: r.dose, tau: r.tau, tinf: r.tinf };
+      if (r.mode !== 'ci' && S.nDoses) reg.nDoses = S.nDoses;
       var res = P.simulate({
         model: m, cov: cov, regimen: reg, target: t, mics: mics,
-        mic: S.mic, n: S.n, seed: S.seed, nT: 140, nGrid: 260
+        mic: S.mic, n: S.n, seed: S.seed,
+        evalDose: S.evalDose || 'last', plotWhole: S.plotWhole,
+        nT: S.plotWhole ? 480 : 140, nGrid: 260
       });
       res.color = COLORS[i % 3];
       res.label = regLabel(r);
       results.push(res);
     });
     LAST = { results: results, model: m, target: t, cov: cov };
+    drawHeader(results);
     drawPta(results, t);
     drawConc(results, t);
     drawSummary(results, t);
     drawCfr(results);
     drawRenal();
+    drawCourseNote(results);
+  }
+
+  /* The header was previously written once at start-up, which left it
+     naming the wrong drug after a model change. It is derived state and
+     belongs in the render path. */
+  function drawHeader(results) {
+    var m = model(), r0 = results && results[0];
+    if ($('title')) {
+      $('title').textContent = Q.title || (m.drug + ' \u2014 target attainment');
+    }
+    if ($('subtitle')) {
+      var where = !r0 ? ''
+        : (r0.schedule && r0.schedule.ci) ? ' &middot; continuous infusion'
+        : (r0.atSteadyState
+            ? ' &middot; dose ' + r0.evalDose + ' of ' + r0.nDoses + ' (steady state)'
+            : ' &middot; dose ' + r0.evalDose + ' of ' + r0.nDoses + ' (pre\u2013steady state)');
+      $('subtitle').innerHTML = m.label + ' &middot; Monte Carlo, n = ' + S.n +
+                                ', seed ' + S.seed + where;
+    }
+  }
+
+  function drawCourseNote(results) {
+    var host = $('courseNote'); if (!host) return;
+    var r0 = results[0];
+    if (!r0 || (r0.schedule && r0.schedule.ci)) {
+      host.textContent = 'Continuous infusion: exposure is averaged over the ' +
+                         'final 24 h.';
+      return;
+    }
+    var msg = 'Target evaluated over dose ' + r0.evalDose + ' of ' + r0.nDoses +
+              ' (' + fmt(r0.tA) + '\u2013' + fmt(r0.tB) + ' h). ';
+    msg += r0.atSteadyState
+      ? 'This interval is at steady state (\u2265 ' + r0.dosesToSteadyState +
+        ' doses needed for this patient).'
+      : 'NOT yet steady state \u2014 this patient needs about ' +
+        r0.dosesToSteadyState + ' doses to reach it, so attainment here ' +
+        'understates the eventual steady-state value.';
+    host.textContent = msg;
   }
 
   function drawPta(results, t) {
@@ -491,11 +677,33 @@
     var cv = $('cvConc'); if (!cv) return;
     var pl = new Plot(cv, { ylog: S.logy });
     var r0 = results[0],
-        tspan = r0.tB - r0.tA,
+        whole = !!r0.plotWhole,
+        // Whole-course plots keep absolute time from the first dose;
+        // single-interval plots are shifted to start at zero.
+        t0 = whole ? 0 : r0.tA,
+        tspan = (whole ? r0.tPlotB : r0.tB) - t0,
         ymax = 0;
     results.forEach(function (r) {
       r.hi.forEach(function (v) { if (v > ymax) ymax = v; });
     });
+
+    /* Bayesian individual forecast.
+       Built here, on the plot's own schedule and time grid, rather than
+       precomputed on a fixed 0-to-tau axis: the earlier version could not
+       follow the plot window, so in whole-course view it was compressed
+       into the first dosing interval. Generating it from the fitted
+       parameters under the DISPLAYED regimen is also the clinically
+       meaningful object — what this patient is predicted to do on the
+       regimen being evaluated, which is the question MAP forecasting is
+       for. It must be computed BEFORE the y-scale is set, or a
+       high-clearance individual whose peaks exceed the population band
+       is silently clipped at the top of the axis. */
+    var indiv = null;
+    if (S.bayes && LASTMAP && LASTMAP.fit && results.length === 1) {
+      var cfInd = P.concFn(LASTMAP.fit.params, model().ncmt, r0.schedule);
+      indiv = r0.times.map(function (x) { return cfInd(x); });
+      indiv.forEach(function (v) { if (v > ymax) ymax = v; });
+    }
     var micLine = S.mic * (t.micMultiplier || 1);
     ymax = Math.max(ymax, micLine * 1.25);
     var ymin = S.logy ? Math.max(0.05, micLine / 50) : 0;
@@ -504,13 +712,42 @@
       ? [0.1, 1, 10, 100, 1000].filter(function (v) { return v >= ymin && v <= ymax * 1.06; })
           .map(function (v) { return { v: v, l: String(v) }; })
       : niceTicks(0, ymax * 1.06, 5);
-    pl.axes('Time within dosing interval at steady state (h)',
-            'Concentration (mg/L)', niceTicks(0, tspan, 6), yt);
+    var xlab = whole
+      ? 'Time since first dose (h)'
+      : ((r0.schedule && r0.schedule.ci)
+          ? 'Time over the final 24 h of infusion (h)'
+          : (r0.atSteadyState
+              ? 'Time within dosing interval at steady state (h)'
+              : 'Time within dosing interval ' + r0.evalDose + ' (h)'));
+    pl.axes(xlab, 'Concentration (mg/L)', niceTicks(0, tspan, 6), yt);
+
+    // In whole-course view, mark the interval the reported metrics came
+    // from, so the numbers in the summary are traceable to the picture.
+    if (whole && r0.tB > r0.tA) {
+      pl.vline(r0.tA - t0, '#9aa3ab', 1.2, [4, 4]);
+      pl.vline(r0.tB - t0, '#9aa3ab', 1.2, [4, 4]);
+      // The evaluated interval is the LAST one by default, so a
+      // left-aligned label there runs off the right edge — especially at
+      // widget width with a long course. Anchor it inside whichever side
+      // has room.
+      var xa = pl.px(r0.tA - t0), xb = pl.px(r0.tB - t0),
+          roomRight = pl.W - pl.pad.r - xb;
+      if (roomRight > 64) {
+        pl.text('evaluated', xb + 4, pl.pad.t + 2, '#7c858e', 'left', true);
+      } else {
+        pl.text('evaluated', xa - 4, pl.pad.t + 2, '#7c858e', 'right', true);
+      }
+    }
 
     results.forEach(function (r) {
-      var xs = r.times.map(function (x) { return x - r.tA; });
+      var xs = r.times.map(function (x) { return x - t0; });
       if (results.length === 1) {
-        pl.band(xs, r.lo.map(function (v) { return Math.max(ymin, v); }), r.hi,
+        // BOTH edges must be clamped to the axis floor, not just the
+        // lower one: a whole-course plot starts at t = 0 where the
+        // concentration is exactly zero, and log10(0) puts the upper
+        // band edge far off-canvas.
+        pl.band(xs, r.lo.map(function (v) { return Math.max(ymin, v); }),
+                    r.hi.map(function (v) { return Math.max(ymin, v); }),
                 'rgba(0,114,178,.16)');
       }
       pl.line(xs, r.median.map(function (v) { return Math.max(ymin, v); }),
@@ -522,10 +759,12 @@
       pl.text((t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC ' +
               micLine + ' mg/L', pl.pad.l + 5, pl.py(micLine) - 9, MICCOL, 'left', true);
     }
-    // Bayesian individual overlay
-    if (LASTMAP && LASTMAP.curve && results.length === 1) {
-      pl.line(LASTMAP.curve.t, LASTMAP.curve.c.map(function (v) { return Math.max(ymin, v); }),
-              BAYESCOL, 2.4);
+    // Bayesian individual overlay, on the same time base as the
+    // population curves above.
+    if (indiv) {
+      pl.line(r0.times.map(function (x) { return x - t0; }),
+              indiv.map(function (v) { return Math.max(ymin, v); }),
+              BAYESCOL, WIDGET ? 3 : 2.4);
     }
     var leg = $('legConc');
     if (leg) {
@@ -537,7 +776,13 @@
           ? '<span><i class="sw-band" style="background:rgba(0,114,178,.16)"></i>90% prediction interval</span>'
           : '') +
         '<span><i style="background:' + MICCOL + '"></i>' +
-          (t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC</span>';
+          (t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC</span>' +
+        // The individual forecast was previously drawn unlabelled, which
+        // left an unexplained second line on the plot.
+        (indiv
+          ? '<span><i style="background:' + BAYESCOL + '"></i>' +
+            'MAP individual forecast</span>'
+          : '');
     }
   }
 
@@ -576,10 +821,27 @@
         '<th class="num">Cmax</th><th class="num">Cmin</th>' +
         '<th class="num">Breakpoint</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>' +
-      '<p class="cite" style="margin:8px 0 0">Exposure metrics are computed over the ' +
-        'steady-state dosing interval. AUC and Cmax/Cmin are total drug; %fT&gt;MIC uses ' +
+      '<p class="cite" style="margin:8px 0 0">Exposure metrics are computed over ' +
+        // The window is selectable, so this sentence must describe the
+        // window actually used rather than assert steady state.
+        (results[0].schedule && results[0].schedule.ci
+          ? 'the final 24 h of the infusion'
+          : 'dose ' + results[0].evalDose + ' of ' + results[0].nDoses +
+            (results[0].atSteadyState ? ' (steady state)' : ' (pre–steady state)')) +
+        '. AUC and Cmax/Cmin are total drug; %fT&gt;MIC uses ' +
         'free drug (fu = ' + m.fu + '). Breakpoint = highest ladder MIC with PTA ≥ ' +
-        S.ptaThresh + '%.</p>';
+        S.ptaThresh + '%.</p>' +
+      // Nonparametric models are sampled on the natural scale, where a
+      // draw can be non-physical. Suppressing that would misrepresent
+      // how far the simulated population departs from the published one.
+      (results[0].rejectedFraction > 0.001
+        ? '<p class="note" style="margin-top:8px">Nonparametric sampling: ' +
+          fmt(results[0].rejectedFraction * 100, 0) + '% of multivariate-normal ' +
+          'draws from the published covariance matrix were non-physical (a ' +
+          'negative rate constant or volume) and were rejected and redrawn. ' +
+          'The simulated population is therefore a truncated normal, not ' +
+          'exactly the nonparametric distribution the authors fitted.</p>'
+        : '');
   }
 
   function parseMicDist() {
@@ -635,6 +897,7 @@
 
   /* ---------------- Bayesian forecasting ---------------- */
   var LASTMAP = null;
+  var LAST_ACTIVE = {};
   var tdmSamples = [{ time: '', conc: '' }];
 
   function renderTdm() {
@@ -678,16 +941,10 @@
     // Individual profile for the overlay and for exposure metrics.
     var tEnd = sched.tEnd + reg.tau, ts = [], cs = [], i;
     for (i = 0; i <= 300; i++) { var tt = (i * tEnd) / 300; ts.push(tt); cs.push(fit.predict(tt)); }
-    // Overlay is drawn on the steady-state-interval axis of the main plot.
-    var r0 = LAST && LAST.results[0];
-    if (r0) {
-      var ots = [], ocs = [], tau = r0.tB - r0.tA, base = sched.tEnd - reg.tau;
-      for (i = 0; i <= 140; i++) {
-        var u = (i * tau) / 140;
-        ots.push(u); ocs.push(fit.predict(base + u));
-      }
-      LASTMAP = { fit: fit, curve: { t: ots, c: ocs } };
-    }
+    // Only the fit is stored: drawConc() regenerates the overlay on
+    // whatever schedule and time window the plot is currently showing,
+    // so it cannot fall out of step with the displayed regimen.
+    LASTMAP = { fit: fit };
 
     var t = target(),
         cfInd = fit.predict,
@@ -765,9 +1022,13 @@
       var c = S.regimens[2];
       if (!c.mode) p.push('dose3=' + c.dose, 'tau3=' + c.tau, 'tinf3=' + c.tinf);
     }
-    ['wt', 'age', 'sex', 'scr', 'scrUnit', 'cysc', 'ht', 'rd'].forEach(function (k) {
+    ['wt', 'age', 'sex', 'scr', 'scrUnit', 'cysc', 'ht', 'rd', 'alb'].forEach(function (k) {
       if (S.cov[k] != null && S.cov[k] !== '') p.push(k + '=' + encodeURIComponent(S.cov[k]));
     });
+    if (S.nDoses) p.push('ndoses=' + S.nDoses);
+    if (S.evalDose) p.push('evaldose=' + S.evalDose);
+    if (S.plotWhole) p.push('whole=1');
+    if (!S.bayes) p.push('bayes=0');
     if (S.cov.ecmo) p.push('ecmo=1');
     if (S.cov.rrt) p.push('rrt=1');
     if (S.cov.dialysis && S.cov.dialysis !== 'none') p.push('dialysis=' + S.cov.dialysis);
@@ -785,6 +1046,7 @@
   function bindCov() {
     var map = [['wt', 'wt', 'num'], ['age', 'age', 'num'], ['ht', 'ht', 'num'],
                ['scr', 'scr', 'num'], ['cysc', 'cysc', 'num'], ['rd', 'rd', 'num'],
+               ['alb', 'alb', 'num'],
                ['sex', 'sex', 'str'], ['scrUnit', 'scrUnit', 'str'],
                ['dialysis', 'dialysis', 'str']];
     map.forEach(function (m2) {
@@ -879,6 +1141,12 @@
 
   function renderPending() {
     var host = $('pendingList'); if (!host) return;
+    if (!M.PENDING.length) {
+      host.innerHTML = 'None \u2014 every model in the library is implemented ' +
+        'from its own published parameter table. A model that cannot be ' +
+        'faithfully reproduced is listed here rather than approximated.';
+      return;
+    }
     host.innerHTML = M.PENDING.map(function (p) {
       return '<div style="margin-bottom:7px"><b>' + p.drug + ' — ' + p.label + '</b><br>' +
         p.reason + ' <a href="https://doi.org/' + p.doi + '" target="_blank" rel="noopener">doi</a></div>';
@@ -902,7 +1170,8 @@
       // 845 mL/24 h is the population median residual diuresis in the
       // O'Jeanson cohort, which is the value its typical clearance is
       // centred on, so it is the neutral default.
-      rd: num(Q.rd, 845)
+      rd: num(Q.rd, 845),
+      alb: num(Q.alb, 2.8)
     };
     S.mic = num(Q.mic, m0.defaultMic);
     S.regimens = defaultRegimens();
@@ -926,6 +1195,46 @@
       });
     });
     if ($('mic')) $('mic').value = S.mic;
+
+    // Dosing-course controls. A blank field means "auto": doses given ->
+    // out to steady state, evaluate dose -> the last one.
+    [['nDosesIn', 'nDoses'], ['evalDoseIn', 'evalDose']].forEach(function (p) {
+      var el = $(p[0]); if (!el) return;
+      if (S[p[1]] != null) el.value = S[p[1]];
+      el.addEventListener('input', function () {
+        var v = parseFloat(el.value);
+        S[p[1]] = (el.value === '' || !isFinite(v) || v < 1) ? null : Math.round(v);
+        run();
+      });
+    });
+    var pw = $('plotWhole');
+    if (pw) {
+      pw.checked = S.plotWhole;
+      pw.onchange = function () {
+        S.plotWhole = pw.checked;
+        var w = $('wWhole'); if (w) w.value = pw.checked ? '1' : '0';
+        run();
+      };
+    }
+    var ww = $('wWhole');
+    if (ww) {
+      ww.value = S.plotWhole ? '1' : '0';
+      ww.onchange = function () {
+        S.plotWhole = ww.value === '1';
+        if (pw) pw.checked = S.plotWhole;
+        run();
+      };
+    }
+
+    var bOn2 = $('bayesOn');
+    if (bOn2) {
+      bOn2.checked = S.bayes;
+      bOn2.onchange = function () {
+        S.bayes = bOn2.checked;
+        syncModel(false);
+        run();
+      };
+    }
     var ly = $('logy');
     if (ly) { ly.checked = S.logy; ly.onchange = function () { S.logy = ly.checked; run(); }; }
     var md = $('micDist');
@@ -933,6 +1242,7 @@
     if ($('addReg')) $('addReg').onclick = function () {
       if (S.regimens.length >= 3) return;
       var d = model().defaultRegimen;
+      if (d.mode === 'ci') d = { dose: Math.round((d.dose24 || 12000) / 3), tau: 8, tinf: 0.5 };
       S.regimens.push({ label: 'ABC'.charAt(S.regimens.length),
                         dose: d.dose, tau: d.tau, tinf: d.tinf, on: true });
       renderRegimens(); run();
@@ -942,15 +1252,19 @@
     };
     if ($('runMap')) $('runMap').onclick = runMap;
     if ($('mkEmbed')) $('mkEmbed').onclick = buildEmbed;
-    var dr = model().defaultRegimen;
-    if ($('tdmDose')) $('tdmDose').value = dr.dose;
-    if ($('tdmTau')) $('tdmTau').value = dr.tau;
-    if ($('tdmTinf')) $('tdmTinf').value = dr.tinf;
+    // The TDM dosing record is always intermittent (a bolus history is
+    // what MAP estimation is fitted to), so a model whose default is a
+    // continuous infusion needs a plain intermittent starting point.
+    var dr = model().defaultRegimen,
+        drI = dr.mode === 'ci'
+          ? { dose: Math.round((dr.dose24 || 12000) / 3), tau: 8, tinf: 0.5 }
+          : dr;
+    if ($('tdmDose')) $('tdmDose').value = drI.dose;
+    if ($('tdmTau')) $('tdmTau').value = drI.tau;
+    if ($('tdmTinf')) $('tdmTinf').value = drI.tinf;
 
-    if (Q.title) $('title').textContent = Q.title;
-    else $('title').textContent = model().drug + ' — target attainment';
-    $('subtitle').innerHTML = model().label + ' &middot; ' +
-      'Monte Carlo, n = ' + S.n + ', seed ' + S.seed;
+    // Title and subtitle are written by drawHeader() on every run, so
+    // they cannot go stale when the model changes.
     $('footer').innerHTML = 'Simulation for teaching and exploratory PK/PD analysis. ' +
       'Not a medical device and not a substitute for clinical judgement or local ' +
       'dosing policy; individual dosing decisions require a qualified clinician with ' +
