@@ -480,5 +480,93 @@ function rk4Two(p, R0, Tinf, tEnd, h) {
      `K12 ${k12.toFixed(4)}, K21 ${k21.toFixed(4)}`);
 }
 
+/* ---- 21. Concentration-dependent targets: peak-to-MIC, trough ceiling,
+   and their composite.
+
+   These have a property no other target in the library has: the trough
+   ceiling is met by a LOW exposure, so it moves in the opposite direction
+   to every efficacy target. A synthetic 2-compartment model with
+   aminoglycoside-like disposition is used — this tests the target
+   machinery, not any published drug model. ---- */
+{
+  const agSynth = {
+    id: 'synthetic_aminoglycoside_like', ncmt: 2, fu: 1,
+    params: (c) => ({ CL: 5.0 * (Math.max(5, c.crcl) / 100), V1: 18, Q: 4, V2: 10 }),
+    iiv: { CL: 0.30, V1: 0.20 }, iivScale: 'omega',
+    err: { add: 0.2, prop: 0.10 }
+  };
+  const PEAK = { id: 'cmax10', type: 'cmaxmic', threshold: 10, label: 'Cmax/MIC \u2265 10' };
+  const CEIL = { id: 'cmin1', type: 'cminceil', hi: 1, label: 'Cmin \u2264 1 mg/L' };
+  const BOTH = { id: 'od', type: 'composite', label: 'peak and trough', all: [PEAK, CEIL] };
+
+  const sim = (regimen, target, crcl, mic) => PKPD.simulate({
+    model: agSynth, cov: { crcl }, regimen, target,
+    mics: [mic], mic, n: 1500, seed: 42, nGrid: 600
+  });
+
+  // (a) Peak target behaves like an efficacy target: falls as MIC rises.
+  const ladder = PKPD.simulate({
+    model: agSynth, cov: { crcl: 100 },
+    regimen: { dose: 420, tau: 24, tinf: 0.5 }, target: PEAK,
+    mics: [0.5, 1, 2, 4, 8], mic: 1, n: 1000, seed: 3, nGrid: 400
+  }).pta;
+  let mono = true;
+  for (let i = 1; i < ladder.length; i++) if (ladder[i].pta > ladder[i - 1].pta + 1e-9) mono = false;
+  ok('Cmax/MIC attainment is non-increasing across the MIC ladder', mono,
+     ladder.map(x => `${x.mic}:${x.pta.toFixed(0)}`).join(' '));
+
+  // (b) Trough ceiling runs the OTHER way: a bigger dose makes it harder.
+  const ceilLow = sim({ dose: 300, tau: 24, tinf: 0.5 }, CEIL, 100, 1).ptaAtRefMic;
+  const ceilHigh = sim({ dose: 1200, tau: 24, tinf: 0.5 }, CEIL, 100, 1).ptaAtRefMic;
+  ok('trough-ceiling attainment falls as the dose rises (opposite sense)',
+     ceilHigh <= ceilLow, `300 mg ${ceilLow.toFixed(1)}% vs 1200 mg ${ceilHigh.toFixed(1)}%`);
+
+  // (c) THE once-daily argument, as a property of the engine: at a fixed
+  // total daily dose, extending the interval raises the peak and lowers
+  // the trough. Both halves must hold.
+  const od = sim({ dose: 420, tau: 24, tinf: 0.5 }, BOTH, 100, 1);
+  const tid = sim({ dose: 140, tau: 8, tinf: 0.5 }, BOTH, 100, 1);
+  ok('same daily dose: once-daily gives the higher peak',
+     od.exposure.cmax.median > tid.exposure.cmax.median,
+     `q24h ${od.exposure.cmax.median.toFixed(1)} vs q8h ${tid.exposure.cmax.median.toFixed(1)} mg/L`);
+  ok('same daily dose: once-daily gives the lower trough',
+     od.exposure.cmin.median < tid.exposure.cmin.median,
+     `q24h ${od.exposure.cmin.median.toFixed(2)} vs q8h ${tid.exposure.cmin.median.toFixed(2)} mg/L`);
+  ok('same daily dose: AUC is essentially unchanged by the interval',
+     relerr(od.exposure.auc24.median, tid.exposure.auc24.median) < 0.02,
+     `q24h ${od.exposure.auc24.median.toFixed(1)} vs q8h ${tid.exposure.auc24.median.toFixed(1)} mg·h/L`);
+  ok('once-daily attains the joint peak-and-trough target more often',
+     od.ptaAtRefMic > tid.ptaAtRefMic,
+     `q24h ${od.ptaAtRefMic.toFixed(1)}% vs q8h ${tid.ptaAtRefMic.toFixed(1)}%`);
+
+  // (d) The composite is a JOINT probability over subjects, so it can
+  // never exceed either margin, and is reported component-wise.
+  ok('composite reports one entry per component',
+     od.components && od.components.length === 2,
+     od.components ? od.components.map(c => `${c.type}:${c.pta.toFixed(1)}%`).join(' ') : 'none');
+  ok('joint attainment never exceeds either component',
+     od.ptaAtRefMic <= Math.min(...od.components.map(c => c.pta)) + 1e-9,
+     `joint ${od.ptaAtRefMic.toFixed(1)}% vs components ` +
+     od.components.map(c => c.pta.toFixed(1)).join('/'));
+
+  // (e) Renal impairment breaks once-daily via the TROUGH, not the peak —
+  // the second thing the user wants to teach.
+  const good = sim({ dose: 420, tau: 24, tinf: 0.5 }, BOTH, 100, 1);
+  const bad = sim({ dose: 420, tau: 24, tinf: 0.5 }, BOTH, 20, 1);
+  const cGood = Object.fromEntries(good.components.map(c => [c.type, c.pta]));
+  const cBad = Object.fromEntries(bad.components.map(c => [c.type, c.pta]));
+  ok('renal impairment degrades the trough ceiling',
+     cBad.cminceil < cGood.cminceil,
+     `CLcr 100 ${cGood.cminceil.toFixed(1)}% -> CLcr 20 ${cBad.cminceil.toFixed(1)}%`);
+  ok('renal impairment does NOT degrade the peak',
+     cBad.cmaxmic >= cGood.cmaxmic - 1e-9,
+     `CLcr 100 ${cGood.cmaxmic.toFixed(1)}% -> CLcr 20 ${cBad.cmaxmic.toFixed(1)}%`);
+  ok('and extending the interval restores the trough at reduced renal function',
+     sim({ dose: 420, tau: 48, tinf: 0.5 }, CEIL, 20, 1).ptaAtRefMic >
+     sim({ dose: 420, tau: 24, tinf: 0.5 }, CEIL, 20, 1).ptaAtRefMic,
+     `q24h ${sim({ dose: 420, tau: 24, tinf: 0.5 }, CEIL, 20, 1).ptaAtRefMic.toFixed(1)}%` +
+     ` -> q48h ${sim({ dose: 420, tau: 48, tinf: 0.5 }, CEIL, 20, 1).ptaAtRefMic.toFixed(1)}%`);
+}
+
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

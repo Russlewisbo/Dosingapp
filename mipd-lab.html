@@ -773,6 +773,31 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
       case 'auc':     return m.auc24 >= target.lo && m.auc24 <= target.hi;
       case 'cmin':    return m.cmin >= target.lo && m.cmin <= target.hi;
       case 'cminmic': return mic > 0 && (m.fcmin / mic) >= target.threshold;
+
+      /* ---- Concentration-dependent killing (aminoglycosides) ----
+         Efficacy tracks the peak-to-MIC ratio rather than time above
+         MIC, so a target of this class is met by a HIGH exposure. */
+      case 'cmaxmic': return mic > 0 && (m.fcmax / mic) >= target.threshold;
+
+      /* ---- Trough ceiling (toxicity avoidance) ----
+         The inverse sense of every target above: this one is met by a
+         LOW exposure, so a regimen can fail it by giving too much or
+         dosing too often. Keeping the two senses in one switch is
+         deliberate — the whole argument for once-daily aminoglycoside
+         dosing is that the peak and the trough are optimised in
+         opposite directions. */
+      case 'cminceil': return m.cmin <= target.hi + 1e-12;
+
+      /* ---- Composite: every sub-target must be met by the SAME
+         simulated subject. Not the product of the marginal
+         probabilities — a subject who attains the peak may be the same
+         one who breaches the trough. */
+      case 'composite':
+        for (var i = 0; i < target.all.length; i++) {
+          if (!meetsTarget(m, target.all[i], mic)) return false;
+        }
+        return true;
+
       default: return false;
     }
   }
@@ -874,6 +899,20 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
     var ptaRef = 0;
     for (j = 0; j < n; j++) if (meetsTarget(exposures[j], target, refMic)) ptaRef++;
 
+    /* For a composite target, the joint PTA alone hides WHICH constraint a
+       regimen fails — and that is the teaching point for aminoglycosides:
+       thrice-daily dosing misses the peak while once-daily in renal
+       impairment breaches the trough. Report each component separately
+       alongside the joint figure. */
+    var components = null;
+    if (target.type === 'composite') {
+      components = target.all.map(function (sub) {
+        var k = 0;
+        for (var q = 0; q < n; q++) if (meetsTarget(exposures[q], sub, refMic)) k++;
+        return { label: sub.label, type: sub.type, pta: (100 * k) / n };
+      });
+    }
+
     // Typical-subject (population median parameter) profile.
     var cfTyp = concFn(typ, model.ncmt, sched), typCurve = new Array(nT + 1);
     for (i = 0; i <= nT; i++) typCurve[i] = cfTyp(times[i]);
@@ -894,7 +933,8 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
         cmin: summ('cmin'), cmax: summ('cmax'), tAbove: summ('tAbove')
       },
       n: n, micMultiplier: micEff,
-      rejectedFraction: subjects.rejectedFraction || 0
+      rejectedFraction: subjects.rejectedFraction || 0,
+      components: components
     };
   }
 
