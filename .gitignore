@@ -29,3 +29,6 @@ handoff/
 # transfer packages built for hand-off (regenerate on demand)
 Dosingapp-files.zip
 upload/
+# local static-serve scratch used when checking the Pages subpath layout
+site/
+srv.pid

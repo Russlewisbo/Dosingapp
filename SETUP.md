@@ -1,9 +1,41 @@
 # Setting up MIPD Lab
 
-Three levels, depending on what you want to do. Only the third needs
-anything installed.
+Four levels, depending on what you want to do. Only the last needs
+anything installed, and level 0 needs nothing at all — not even the
+file.
 
 ---
+
+## 0. Use the hosted copy — nothing to install
+
+The app is published with GitHub Pages at
+
+**<https://russlewisbo.github.io/Dosingapp/>**
+
+That is a static site served straight from the `main` branch, so it is the
+same `mipd-lab.html` this repository builds — no backend, no account, and
+nothing is sent anywhere. It works from any browser on any machine, and the
+teaching scenarios are addressable directly:
+
+```
+https://russlewisbo.github.io/Dosingapp/mipd-lab.html?preset=gen-od
+https://russlewisbo.github.io/Dosingapp/mipd-lab.html?preset=gen-renal
+```
+
+Two things to know about relying on the hosted copy in a lecture:
+
+- **The page must load once.** After that it runs offline, because the
+  whole engine is in the file — but the first load needs the network. If
+  the lecture theatre is unreliable, save the page to disk beforehand
+  (right-click → Save Page As) or use a local copy as below.
+- **It tracks `main`.** Pushing a change republishes within a minute or
+  two, so a URL in last term's slides will pick up this term's fixes. If
+  you need a frozen version for a specific course, tag it and serve that
+  tag from a separate branch.
+
+The landing page is generated from `models.js` by `build-index.py`, which
+`build.py` runs for you — so the model table and preset links on the site
+cannot drift from the library. `test-app.cjs` asserts that.
 
 ## 1. Use the app — no setup
 

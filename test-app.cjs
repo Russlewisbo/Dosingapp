@@ -755,5 +755,46 @@ function boot(search) {
      `${MM.MODELS.length} models / ${new Set(MM.MODELS.map(m => m.drug)).size} drugs`);
 }
 
+/* ---- The GitHub Pages landing page is GENERATED from models.js, so it
+   cannot be hand-edited into staleness — but it can be left unbuilt after
+   a library change. These assert the shipped index.html matches the
+   library it advertises. ---- */
+{
+  const fs = require('fs');
+  const MM = require('./models.js');
+  const idx = fs.readFileSync('index.html', 'utf8');
+
+  ok('index.html links every preset in the library',
+     MM.PRESETS.every(p => idx.includes(`?preset=${p.id}"`)),
+     MM.PRESETS.filter(p => !idx.includes(`?preset=${p.id}"`)).map(p => p.id).join(',') || 'all linked');
+  ok('index.html lists every model in the library',
+     MM.MODELS.every(m => idx.includes(m.label.split('\u2014')[0].trim())),
+     MM.MODELS.filter(m => !idx.includes(m.label.split('\u2014')[0].trim()))
+              .map(m => m.id).join(',') || 'all listed');
+  ok('index.html states the current model and drug counts',
+     idx.includes(`${MM.MODELS.length} published population PK models`) &&
+     idx.includes(`${new Set(MM.MODELS.map(m => m.drug)).size} drugs`),
+     `${MM.MODELS.length} models / ${new Set(MM.MODELS.map(m => m.drug)).size} drugs`);
+  ok('index.html has no host-rooted links, so it works under a project subpath',
+     !/(?:href|src)="\/[^/]/.test(idx),
+     (idx.match(/(?:href|src)="\/[^/"]*/g) || ['none']).join(' '));
+  ok('the only local file index.html depends on is the app itself',
+     Array.from(new Set([...idx.matchAll(/(?:href|src)="((?!https?:|#)[^"?]+)/g)]
+       .map(m => m[1]))).join(',') === 'mipd-lab.html',
+     Array.from(new Set([...idx.matchAll(/(?:href|src)="((?!https?:|#)[^"?]+)/g)].map(m => m[1]))).join(','));
+  ok('index.html carries the not-a-medical-device statement',
+     /[Nn]ot a medical device/.test(idx));
+
+  // SETUP.md announces how many levels it has; that sentence has already
+  // gone stale once, so it is checked against the headings themselves.
+  const setup = fs.readFileSync('SETUP.md', 'utf8');
+  const levels = (setup.match(/^## \d+\. /gm) || []).length;
+  const words = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six' };
+  ok('SETUP.md states the number of levels it actually documents',
+     setup.includes(`${words[levels]} levels`),
+     `${levels} numbered sections; header says ` +
+     ((setup.match(/^(\w+) levels/m) || ['?'])[0]));
+}
+
 console.log(fails === 0 ? '\nALL APP TESTS PASSED' : `\n${fails} APP TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

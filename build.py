@@ -23,3 +23,14 @@ assert "<!--PKPD" not in shell, "a marker was not substituted"
 out = ROOT / "mipd-lab.html"
 out.write_text(shell)
 print(f"{out.name}  {out.stat().st_size:,} bytes")
+
+# The GitHub Pages landing page is generated from models.js, so it is built
+# here too rather than being a step somebody has to remember. It needs node
+# (to read the library), so a missing node degrades to a warning instead of
+# breaking the app build, which is pure Python.
+import shutil
+import subprocess
+if shutil.which("node"):
+    subprocess.run(["python", str(ROOT / "build-index.py")], check=True)
+else:
+    print("index.html  SKIPPED (node not found; run build-index.py once it is)")
