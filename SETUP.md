@@ -74,7 +74,7 @@ npm install jsdom        # the only dependency, for the DOM-based suites
 node test-core.cjs       #  64 checks — PK engine against known answers
 node test-app.cjs        # 123 checks — UI, per-model covariates, controls
 node test-layout.cjs     # 104 checks — canvas geometry, clipping, overlaps
-node validate.cjs        #  42 checks — reproduces each paper's own numbers
+node validate.cjs        #  42 checks — checks each model against its paper
 ```
 
 333 checks. `test-slides.cjs` (9 more) skips unless the deck has been
@@ -82,8 +82,22 @@ rendered; `test-deck.cjs` checks a rendered deck's widget actually boots
 and is described in `SLIDES.md`.
 
 Verified on Node 24 with jsdom 30. `validate.cjs` is the one to re-run
-after touching a model — it checks the implementation against values its
-source publication printed.
+after touching a model. It compares each implementation against values its
+source publication printed — and where the two deliberately do *not*
+agree, it asserts the documented discrepancy rather than the agreement, so
+the disagreement stays regression-tested instead of being quietly tuned
+away. Two such cases:
+
+- **Shekar 2014** is internally inconsistent: inverting its Table 3 trough
+  percentiles implies clearances that contradict the same paper's measured
+  cohort means, and its own Table 2 equation cannot produce them under any
+  unit reading. The published equation is implemented, because it
+  reproduces the measured clearances; the test asserts that attainment
+  therefore diverges from that paper's dosing table at high CLcr.
+- **Li 2006** resampled its whole cohort's covariates, whereas this tool
+  conditions on the one patient you enter. Its equations reproduce exactly,
+  but its published 64% → 90% pair cannot be matched at *any* single
+  covariate point — the test asserts that it cannot.
 
 ### Render the demo deck
 
