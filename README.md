@@ -502,9 +502,11 @@ reference 10), and the app labels the renal readout accordingly.
 Substituting Cockcroft-Gault is a model misuse — but not for the reason
 usually given. The two differ by **body size**, not age: Cockcroft-Gault
 is linear in weight while Jelliffe scales with body surface area, so their
-ratio moves from about **1.13 at 45 kg to 0.66 at 130 kg**. Using
-Cockcroft-Gault would overestimate amikacin clearance by roughly a third
-in a large patient. Across age and creatinine the ratio is almost flat
+ratio moves from about **1.13 at 45 kg to 0.66 at 130 kg**. In a 130 kg
+patient Cockcroft-Gault returns 144 mL/min where Jelliffe returns 96, so
+substituting it would overestimate this model's clearance by about **50%**
+(5.4 → 8.1 L/h; clearance is linear in CLcr here, so the error carries
+through exactly). Across age and creatinine the ratio is almost flat
 (0.90 to 0.92). Both halves are asserted in `validate.cjs`.
 
 ### Variability on the scale it was published on

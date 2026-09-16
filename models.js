@@ -802,9 +802,12 @@
             'interchangeable here: Cockcroft-Gault scales linearly with ' +
             'body weight whereas Jelliffe scales with body surface area, ' +
             'so their ratio moves from about 1.13 at 45 kg to 0.66 at ' +
-            '130 kg (same age and creatinine). Substituting Cockcroft-Gault ' +
-            'would therefore overestimate amikacin clearance by roughly a ' +
-            'third in a large patient. Age and creatinine, by contrast, ' +
+            '130 kg (same age and creatinine). In a 130 kg patient ' +
+            'Cockcroft-Gault returns 144 mL/min where Jelliffe returns 96, ' +
+            'so substituting it would overestimate this model\u2019s ' +
+            'clearance by about 50% \u2014 clearance is linear in CLcr ' +
+            'here, so the error carries through exactly. Age and ' +
+            'creatinine, by contrast, ' +
             'barely change the ratio. Jelliffe returns mL/min/1.73m\u00b2 and is ' +
             'rescaled here to the patient\u2019s own body surface area ' +
             '(Mosteller) because the model\u2019s covariate is an absolute ' +

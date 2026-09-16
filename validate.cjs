@@ -518,10 +518,24 @@ const mHe = MODELS.find(m => m.id === 'tob_hennig2013');
   ok('...and is nearly flat with age, so age is NOT the reason they differ',
      Math.abs(at(70, 25) - at(70, 85)) < 0.05,
      `age 25 ${at(70, 25).toFixed(2)} vs age 85 ${at(70, 85).toFixed(2)}`);
-  ok('substituting Cockcroft-Gault would overestimate CL in a large patient',
-     mRo.params({ crcl: PKPD.cockcroftGault({ scr: 1.0, scrUnit: 'mg/dL', age: 60, sex: 'M', wt: 130 }), wt: 130 }).CL >
-     1.3 * mRo.params({ crcl: PKPD.jelliffe({ scr: 1.0, scrUnit: 'mg/dL', age: 60, sex: 'M', wt: 130, ht: 175, absolute: true }), wt: 130 }).CL,
-     'by about a third at 130 kg');
+  /* The MAGNITUDE is pinned, not just the direction. An earlier version of
+     this check used a loose > 1.3x threshold and a label reading "about a
+     third", which came from dividing the difference by the Cockcroft-Gault
+     value instead of by the Jelliffe value the model actually expects.
+     The overestimate relative to the correct input is 144.4/95.9 = 1.506. */
+  {
+    const big = { scr: 1.0, scrUnit: 'mg/dL', age: 60, sex: 'M', wt: 130, ht: 175 };
+    const clJel = mRo.params({ crcl: PKPD.jelliffe({ ...big, absolute: true }), wt: 130 }).CL;
+    const clCG = mRo.params({ crcl: PKPD.cockcroftGault(big), wt: 130 }).CL;
+    ok('substituting Cockcroft-Gault overestimates CL by about 50% at 130 kg',
+       Math.abs(clCG / clJel - 1.506) < 0.02,
+       `${clJel.toFixed(2)} -> ${clCG.toFixed(2)} L/h, ` +
+       `+${((clCG / clJel - 1) * 100).toFixed(1)}%`);
+    ok('the overestimate is NOT the smaller wrong-denominator figure',
+       Math.abs((clCG - clJel) / clCG - 0.336) < 0.02 &&
+       Math.abs(clCG / clJel - 1.336) > 0.1,
+       'wrong denominator gives 33.6%, correct is 50.6%');
+  }
 }
 
 {
