@@ -35,13 +35,19 @@ reveal.js.
 ## Checking it worked
 
 ```bash
+npm install jsdom
 node test-deck.cjs
 ```
 
-Serves the rendered deck over HTTP, loads it, and asserts the widget
-actually boots inside the iframe (it checks for the app's own global, not
-merely that the iframe loaded — a 404 page loads fine). Needs `npm install
-jsdom`.
+Run it **in this folder**. It serves the rendered deck over a local HTTP
+server, loads it, and confirms the widget actually boots inside the slide
+iframe — it looks for the app's own global, not merely that the iframe
+loaded, because a 404 page loads fine. It then repeats the check with the
+app deliberately removed, to prove the warning banner fires rather than
+passing vacuously.
+
+If the app is not beside the deck it says so and names the fix, and it
+exits non-zero, so it is safe to use in a script.
 
 ## Adding your own widget slide
 

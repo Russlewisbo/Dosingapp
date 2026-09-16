@@ -15,7 +15,7 @@ file that embeds live in Quarto/reveal.js teaching slides.
 
 | | |
 |---|---|
-| Deliverable | `mipd-lab.html` — one self-contained file, 104 KB, no CDN, no server, no network |
+| Deliverable | `mipd-lab.html` — one self-contained file, 133 KB, no CDN, no server, no network requests (the only external URLs are the clickable DOI citation links) |
 | Models implemented | 6 (3 drugs) |
 | Models documented but not implemented | 4, each with the reason shown in-app |
 | Test checks passing | **342** across 5 suites |
