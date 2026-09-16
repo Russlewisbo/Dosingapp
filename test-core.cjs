@@ -593,5 +593,75 @@ function rk4Two(p, R0, Tinf, tEnd, h) {
      `${b.times[0]}..${b.times[b.times.length - 1]} within ${b.tA}..${b.tB}`);
 }
 
+/* ---- 23. The MAP optimiser must actually reach the optimum.
+   Checked by reconstructing mapEstimate's exact objective — including the
+   log(variance) normalisation term, whose omission made an earlier
+   hand-rolled probe report a spurious 1.85-unit "improvement" — and then
+   confirming that random perturbation around the returned solution cannot
+   beat it. Run across an extreme patient, a near-typical one and a
+   single-sample case, because the sparse case is where a simplex is most
+   likely to collapse early. ---- */
+{
+  const m = MODELS.find(x => x.id === 'van_thomson2009');
+  const cov = { wt: 80, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' };
+  cov.crcl = PKPD.cockcroftGault(cov);
+  const reg = { dose: 1000, tau: 12, tinf: 1, nDoses: 4 };
+  const sched = PKPD.buildSchedule(reg);
+  const add = m.err.add, prop = m.err.prop;
+
+  const objFor = (samples, typ, keys) => (etas) => {
+    const p = {};
+    Object.keys(typ).forEach(k => { p[k] = typ[k]; });
+    keys.forEach((k, i) => { p[k] = typ[k] * Math.exp(etas[i]); });
+    if (!(p.CL > 0) || !(p.V1 > 0) || !(p.Q > 0) || !(p.V2 > 0)) return 1e12;
+    const cf = PKPD.concFn(p, m.ncmt, { events: sched.events });
+    let ll = 0;
+    for (const s of samples) {
+      const pred = cf(s.time);
+      let va = add * add + (prop * pred) * (prop * pred);
+      if (!(va > 0)) va = 1e-8;
+      ll += ((s.conc - pred) ** 2) / va + Math.log(va);
+    }
+    keys.forEach((k, i) => {
+      const om = PKPD.omegaOf(m, k);
+      if (om > 0) ll += (etas[i] * etas[i]) / (om * om);
+    });
+    return ll;
+  };
+
+  const cases = [
+    { s: [{ time: 11.5, conc: 18 }, { time: 2, conc: 42 }], n: 'extreme patient' },
+    { s: [{ time: 11.5, conc: 9 }, { time: 2, conc: 26 }], n: 'near-typical patient' },
+    { s: [{ time: 11.5, conc: 6 }], n: 'single trough only' },
+  ];
+  // Deterministic probe directions, so the test cannot flake.
+  let seed = 20260916;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed / 0x7fffffff) * 2 - 1; };
+
+  for (const c of cases) {
+    const fit = PKPD.mapEstimate(m, cov, sched.events, c.s);
+    const obj = objFor(c.s, fit.typicalParams, fit.keys);
+    const f0 = obj(fit.etas);
+    ok(`reconstructed objective matches mapEstimate's own (${c.n})`,
+       Math.abs(f0 - fit.objective) < 1e-6,
+       `${f0.toFixed(5)} vs ${fit.objective.toFixed(5)}`);
+    let best = f0;
+    for (let i = 0; i < 3000; i++) {
+      const f = obj(fit.etas.map(v => v + rnd() * 0.4));
+      if (f < best) best = f;
+    }
+    ok(`no random perturbation beats the MAP solution (${c.n})`,
+       best >= f0 - 1e-6, `best probe ${best.toFixed(5)} vs fit ${f0.toFixed(5)}`);
+  }
+
+  // Direction: high measured concentrations must lower clearance.
+  const hi = PKPD.mapEstimate(m, cov, sched.events, [{ time: 11.5, conc: 18 }, { time: 2, conc: 42 }]);
+  const lo = PKPD.mapEstimate(m, cov, sched.events, [{ time: 11.5, conc: 3 }, { time: 2, conc: 14 }]);
+  ok('higher measured concentrations imply lower individual clearance',
+     hi.params.CL < hi.typicalParams.CL && lo.params.CL > lo.typicalParams.CL,
+     `typical ${hi.typicalParams.CL.toFixed(2)}, high-conc ${hi.params.CL.toFixed(2)}, ` +
+     `low-conc ${lo.params.CL.toFixed(2)} L/h`);
+}
+
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

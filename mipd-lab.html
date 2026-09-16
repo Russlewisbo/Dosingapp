@@ -321,6 +321,12 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
         <button class="mini" id="addTdm">+ sample</button>
         <button class="primary" id="runMap">Run MAP estimation</button>
       </div>
+      <div class="inline" style="margin-top:9px">
+        <input id="fitView" type="checkbox" checked>
+        <label for="fitView">Plot the sampled period, with the measured
+          concentrations, instead of the forecast under the displayed
+          regimen</label>
+      </div>
       <div id="mapOut" style="margin-top:12px"></div>
       </div>
     </div>
@@ -2321,6 +2327,12 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
     n: num(Q.n, WIDGET ? 600 : 1000),
     seed: num(Q.seed, 20250101),
     logy: bool(Q.logy, false),
+    // When a MAP fit exists, plot the period the samples came from
+    // rather than the forecast window: the population curve, the
+    // individual curve and the observations only sit on a common
+    // time base there, and without the observations a student
+    // cannot see WHY the two curves separated.
+    fitView: bool(Q.fitview, true),
     // null = dose out to steady state automatically
     nDoses: Q.ndoses ? Math.max(1, num(Q.ndoses, 0)) : null,
     evalDose: Q.evaldose ? Math.max(1, num(Q.evaldose, 0)) : null,
@@ -2976,8 +2988,139 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
     }
   }
 
+  /* ------------------------------------------------------------------
+     The sampled period: population prediction, the MAP individual, and
+     the measurements, on one time base.
+
+     This is the picture the forecast view cannot draw. The forecast view
+     shows one dosing interval of the regimen being EVALUATED, which is
+     usually not the regimen the samples were taken under — so the
+     observations have no correct position on it. Here the axis is the
+     dosing record itself, absolute from its first dose, which is the
+     clock the sample times were entered on.
+
+     The population band and median come from the PRIOR (the model's own
+     parameters and variability for this patient's covariates), not from
+     the fit — that contrast is the entire teaching point: the band is
+     what was predicted before the samples, the individual line is what
+     the samples changed it to.
+     ------------------------------------------------------------------ */
+  function drawFitView(cv, t) {
+    var L = LASTMAP, m = modelResolved(), cov = covFull(),
+        reg = { dose: L.regimen.dose, tau: L.regimen.tau,
+                tinf: L.regimen.tinf, nDoses: L.regimen.nDoses },
+        pop = P.simulate({
+          model: m, cov: cov, regimen: reg, target: t,
+          mics: [S.mic], mic: S.mic, n: S.n, seed: S.seed,
+          plotWhole: true, nGrid: 300
+        }),
+        sched = P.buildSchedule(reg),
+        cfInd = P.concFn(L.fit.params, m.ncmt, sched),
+        times = pop.times,
+        indiv = times.map(function (x) { return cfInd(x); }),
+        micLine = S.mic * (t.micMultiplier || 1),
+        pl = new Plot(cv, { ylog: S.logy }),
+        ymax = 0, i;
+
+    for (i = 0; i < times.length; i++) {
+      if (pop.hi[i] > ymax) ymax = pop.hi[i];
+      if (indiv[i] > ymax) ymax = indiv[i];
+    }
+    // The observations must be inside the axis, or a sample above the
+    // population band is silently clipped off the top — exactly the
+    // failure the individual curve had before it was included here.
+    L.samples.forEach(function (s) { if (s.conc > ymax) ymax = s.conc; });
+    ymax = Math.max(ymax, micLine * 1.25);
+
+    var ymin = S.logy ? Math.max(0.05, Math.min.apply(null,
+          L.samples.map(function (s) { return s.conc; }).concat([micLine])) / 8) : 0,
+        tspan = pop.tPlotB;
+    pl.setScale(0, tspan, ymin, ymax * 1.06);
+    var yt = S.logy
+      ? [0.1, 1, 10, 100, 1000].filter(function (v) { return v >= ymin && v <= ymax * 1.06; })
+          .map(function (v) { return { v: v, l: String(v) }; })
+      : niceTicks(0, ymax * 1.06, 5);
+    // The full label overflows a 380 px widget canvas (caught by the
+    // layout audit at x 394 on a 380 px width), so the narrow build gets
+    // the short form.
+    pl.axes(WIDGET ? 'Time from first dose (h)'
+                   : 'Time since the first dose of the sampled record (h)',
+            'Concentration (mg/L)', niceTicks(0, tspan, 6), yt);
+
+    var clamp = function (v) { return Math.max(ymin, v); };
+    pl.band(times, pop.lo.map(clamp), pop.hi.map(clamp), 'rgba(0,114,178,.16)');
+    pl.line(times, pop.median.map(clamp), '#0072b2', WIDGET ? 3 : 2.4);
+    pl.line(times, indiv.map(clamp), BAYESCOL, WIDGET ? 3.4 : 2.8);
+    if (micLine > 0) {
+      pl.hline(micLine, MICCOL, 1.8, [6, 4]);
+      pl.text((t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC ' +
+              micLine + ' mg/L', pl.pad.l + 5, pl.py(micLine) - 9, MICCOL, 'left', true);
+    }
+    pl.points(L.samples.map(function (s) { return s.time; }),
+              L.samples.map(function (s) { return clamp(s.conc); }),
+              BAYESCOL, WIDGET ? 5 : 4.5);
+
+    var leg = $('legConc');
+    if (leg) {
+      leg.innerHTML =
+        '<span><i style="background:#0072b2"></i>Population prediction ' +
+          '(median)</span>' +
+        '<span><i class="sw-band" style="background:rgba(0,114,178,.16)"></i>' +
+          'Population 90% prediction interval</span>' +
+        '<span><i style="background:' + BAYESCOL + '"></i>' +
+          'MAP individual</span>' +
+        '<span><i style="background:' + BAYESCOL +
+          ';border-radius:50%"></i>Measured concentration</span>' +
+        (micLine > 0
+          ? '<span><i style="background:' + MICCOL + '"></i>' +
+            (t.micMultiplier ? t.micMultiplier + '\u00d7' : '') + 'MIC</span>'
+          : '');
+    }
+    var host = $('courseNote');
+    if (host) {
+      // Quantify the separation rather than leaving it to the eye: the
+      // ratio of individual to population clearance is what the samples
+      // actually changed, and it is the number a student should take away.
+      var kCL = L.fit.params.CL / L.fit.typicalParams.CL,
+          dir = kCL > 1 ? 'faster' : 'slower',
+          inBand = L.samples.filter(function (s) {
+            // Nearest grid point to each observation.
+            var j = 0, best = Infinity, q;
+            for (q = 0; q < times.length; q++) {
+              var dd = Math.abs(times[q] - s.time);
+              if (dd < best) { best = dd; j = q; }
+            }
+            return s.conc >= pop.lo[j] && s.conc <= pop.hi[j];
+          }).length;
+      host.innerHTML =
+        'Showing the <b>sampled period</b>: ' + reg.dose + ' mg q' + reg.tau +
+        'h over ' + reg.nDoses + ' dose' + (reg.nDoses === 1 ? '' : 's') +
+        ', with the ' + L.samples.length + ' measured concentration' +
+        (L.samples.length === 1 ? '' : 's') + ' plotted. The blue band is what ' +
+        'the population model predicted for this patient <i>before</i> the ' +
+        'samples; the pink line is the individual the samples imply. ' +
+        'This patient clears the drug <b>' + fmt(Math.abs(kCL - 1) * 100, 0) +
+        '% ' + dir + '</b> than the population typical value (CL ' +
+        fmt(L.fit.typicalParams.CL, 2) + ' \u2192 ' + fmt(L.fit.params.CL, 2) +
+        ' L/h), and ' + inBand + ' of ' + L.samples.length +
+        ' observations fell inside the population 90% interval' +
+        (inBand === L.samples.length
+          ? ' \u2014 so the prior was already consistent with this patient, and ' +
+            'the individual line stays close to the population median.'
+          : ' \u2014 which is why the individual line departs from the ' +
+            'population median.') +
+        ' Untick the box in the forecasting card to see the forecast under ' +
+        'the regimen you are evaluating instead.';
+    }
+    return pop;
+  }
+
   function drawConc(results, t) {
     var cv = $('cvConc'); if (!cv) return;
+    if (S.bayes && S.fitView && LASTMAP && LASTMAP.fit) {
+      drawFitView(cv, t);
+      return;
+    }
     var pl = new Plot(cv, { ylog: S.logy });
     var r0 = results[0],
         whole = !!r0.plotWhole,
@@ -3285,10 +3428,14 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
     // Individual profile for the overlay and for exposure metrics.
     var tEnd = sched.tEnd + reg.tau, ts = [], cs = [], i;
     for (i = 0; i <= 300; i++) { var tt = (i * tEnd) / 300; ts.push(tt); cs.push(fit.predict(tt)); }
-    // Only the fit is stored: drawConc() regenerates the overlay on
-    // whatever schedule and time window the plot is currently showing,
-    // so it cannot fall out of step with the displayed regimen.
-    LASTMAP = { fit: fit };
+    /* The fit is stored with the dosing record it was estimated from and
+       the observations themselves. Both are needed to draw the sampled
+       period; and keeping the record means the sample points can never be
+       drawn against a dosing history they do not belong to, which would
+       misplace them silently. drawConc() still regenerates the forecast
+       overlay on whatever window the plot is showing, so that cannot fall
+       out of step with the displayed regimen either. */
+    LASTMAP = { fit: fit, regimen: reg, samples: samples };
 
     var t = target(),
         cfInd = fit.predict,
@@ -3326,6 +3473,53 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
             '</td><td class="num">' + fmt(f.pred, 2) + '</td></tr>';
         }).join('') + '</tbody></table></div>' +
       '<div>' +
+        /* The population figure for the SAME dosing record, so the
+           individual number has something to be read against. Without it
+           a student sees "individual AUC 512" and has nothing to compare
+           it to; the interesting quantity is the shift. */
+        (function () {
+          var popFit = P.simulate({
+                model: m, cov: cov,
+                regimen: { dose: reg.dose, tau: reg.tau, tinf: reg.tinf,
+                           nDoses: reg.nDoses },
+                target: t, mics: [S.mic], mic: S.mic,
+                n: Math.min(S.n, 1500), seed: S.seed, nGrid: 300
+              }),
+              indVal = t.type === 'auc' || t.type === 'aucmic' ? mInd.auc24
+                     : t.type === 'cmin' || t.type === 'cminceil' ? mInd.cmin
+                     : t.type === 'cmaxmic' ? mInd.cmax : mInd.tAbove,
+              popVal = t.type === 'auc' || t.type === 'aucmic' ? popFit.exposure.auc24.median
+                     : t.type === 'cmin' || t.type === 'cminceil' ? popFit.exposure.cmin.median
+                     : t.type === 'cmaxmic' ? popFit.exposure.cmax.median
+                     : popFit.exposure.tAbove.median,
+              unit = t.type === 'auc' || t.type === 'aucmic' ? ' mg\u00b7h/L'
+                   : t.type === 'ftmic' ? '%' : ' mg/L';
+          return '<table><thead><tr><th>On the sampled record</th>' +
+            '<th class="num">Population</th><th class="num">This individual</th>' +
+            '</tr></thead><tbody>' +
+            '<tr><td>' + t.label + '</td><td class="num">' + fmt(popVal, 1) + unit +
+              '</td><td class="num"><b>' + fmt(indVal, 1) + unit + '</b></td></tr>' +
+            '<tr><td>AUC\u2080\u208b\u2082\u2084</td><td class="num">' +
+              fmt(popFit.exposure.auc24.median, 0) + '</td><td class="num"><b>' +
+              fmt(mInd.auc24, 0) + '</b></td></tr>' +
+            '<tr><td>C\u2098\u1d62\u2099</td><td class="num">' +
+              fmt(popFit.exposure.cmin.median, 2) + '</td><td class="num"><b>' +
+              fmt(mInd.cmin, 2) + '</b></td></tr>' +
+            '<tr><td>C\u2098\u2090\u2093</td><td class="num">' +
+              fmt(popFit.exposure.cmax.median, 1) + '</td><td class="num"><b>' +
+              fmt(mInd.cmax, 1) + '</b></td></tr>' +
+            '<tr><td>Attainment across the population</td><td class="num">' +
+              fmt(popFit.ptaAtRefMic) + '%</td><td class="num">' +
+              '<span class="pill ' + (hit ? 'ok' : 'bad') + '">' +
+              (hit ? 'met' : 'missed') + '</span></td></tr>' +
+            '</tbody></table>' +
+            '<p class="cite">The population column is this patient\u2019s ' +
+            'covariates run through the model without the samples \u2014 the ' +
+            'prediction you would have made before measuring. The ' +
+            'attainment percentage is a probability over the simulated ' +
+            'population; for one identified individual the target is simply ' +
+            'met or not.</p>';
+        })() +
         '<div class="kv"><span>Individual ' + t.label + '</span><span>' +
           (t.type === 'auc' ? fmt(mInd.auc24, 0) + ' mg·h/L'
             : t.type === 'cmin' ? fmt(mInd.cmin, 2) + ' mg/L'
@@ -3343,6 +3537,33 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
             : '<div class="note">No dose up to 12 g per interval met the target for this ' +
               'individual at the current interval and infusion duration.</div>') +
         '</div>' +
+        /* A parameter pushed far beyond its own between-subject SD means
+           the samples and the prior disagree, not that individualisation
+           succeeded. Students otherwise read any fitted curve as "the
+           patient", including one the model can barely represent. The
+           threshold is on eta/omega, so a parameter with a wide published
+           omega (V2 here, at 130%) is not flagged for a large absolute
+           eta while a tight one (V1, 15%) is. */
+        (function () {
+          var strained = keys.map(function (k, i4) {
+            var om = P.omegaOf(m, k);
+            return { k: k, z: om > 0 ? fit.etas[i4] / om : 0 };
+          }).filter(function (x) { return Math.abs(x.z) > 3; });
+          if (!strained.length) return '';
+          return '<div class="note" style="margin-top:10px">' +
+            '<b>The samples and the population prior disagree.</b> ' +
+            strained.map(function (x) {
+              return x.k + ' is ' + fmt(Math.abs(x.z), 1) + ' between-subject SD ' +
+                     (x.z < 0 ? 'below' : 'above') + ' its typical value';
+            }).join('; ') +
+            '. The MAP estimate is still the best compromise between these ' +
+            'measurements and the model, but a deviation this large usually ' +
+            'means something other than an unusual patient \u2014 a mistimed ' +
+            'or mislabelled sample, a dosing record that does not match what ' +
+            'was actually given, or a model built in a population this ' +
+            'patient does not belong to. Check those before acting on the ' +
+            'individualised curve.</div>';
+        })() +
         '<p class="cite">MAP estimate maximises the posterior combining these samples with ' +
         'the model prior (ω) and residual error (additive ' + (m.err.add || 0) + ' mg/L, ' +
         'proportional ' + Math.round((m.err.prop || 0) * 100) + '%). Sparse samples shrink ' +
@@ -3373,6 +3594,7 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
     if (S.evalDose) p.push('evaldose=' + S.evalDose);
     if (S.plotWhole) p.push('whole=1');
     if (!S.bayes) p.push('bayes=0');
+    if (!S.fitView) p.push('fitview=0');
     if (S.cov.ecmo) p.push('ecmo=1');
     if (S.cov.rrt) p.push('rrt=1');
     if (S.cov.trauma) p.push('trauma=1');
@@ -3608,6 +3830,11 @@ input.inert,select.inert{background:var(--line2);color:var(--ink3)}
       };
     }
 
+    var fv = $('fitView');
+    if (fv) {
+      fv.checked = S.fitView;
+      fv.onchange = function () { S.fitView = fv.checked; run(); };
+    }
     var bOn2 = $('bayesOn');
     if (bOn2) {
       bOn2.checked = S.bayes;

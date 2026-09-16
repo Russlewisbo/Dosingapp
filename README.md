@@ -550,6 +550,66 @@ sampled CL spread is checked against the published 29.6% CV.
   model note: IIV on V<sub>1</sub> is 5.8% with a relative standard error
   of 350%, and K<sub>21</sub> has a 95% CI of 0.0033–0.14.
 
+## Seeing what the Bayesian fit changed
+
+Target attainment answers a question about a *population*. MAP forecasting
+answers one about *this patient* — and the interesting thing is not the
+individualised curve on its own, it is the gap between it and what the
+model predicted before the samples arrived.
+
+Running **Run MAP estimation** switches the concentration plot to the
+**sampled period**, which puts four things on one time base:
+
+- the population **90% prediction interval** for this patient's covariates
+  — what you would have predicted before measuring anything;
+- the population **median**;
+- the **MAP individual** curve;
+- the **measured concentrations** themselves, as points.
+
+That last one is why the view exists. The forecast view plots one dosing
+interval of the regimen being *evaluated*, which is usually not the
+regimen the samples were taken under — so the observations have no correct
+position on it, and a curve that has moved gives no visible reason for
+having moved. Here the axis is the dosing record, absolute from its first
+dose, which is the clock the sample times were entered on.
+
+The note under the plot quantifies the shift rather than leaving it to the
+eye — the ratio of individual to population clearance, and how many
+observations fell inside the population interval. If all of them did, the
+prior was already consistent with the patient and the individual line
+stays near the median; that is a real and instructive outcome, not a
+failed fit. Untick the box in the forecasting card to go back to the
+forecast under the regimen you are evaluating.
+
+Beside the plot, the result panel reports the population and individual
+values **side by side** for the same dosing record, so the individual
+number has something to be read against — plus the population attainment
+percentage, with the reminder that for one identified individual a target
+is simply met or not, not met with a probability.
+
+### When the samples and the prior disagree
+
+A parameter driven more than three between-subject SD from its typical
+value is flagged. The threshold is on η/ω, not on the raw η, so a
+parameter with a wide published ω is not flagged for a large absolute
+deviation while a tight one is — in the Thomson vancomycin model, V<sub>2</sub>
+carries ω = 130% and V<sub>1</sub> only 15%, so the same absolute shift
+means very different things.
+
+The MAP estimate is still the best compromise available between those
+measurements and that model, but a deviation that large usually means
+something other than an unusual patient: a mistimed or mislabelled sample,
+a dosing record that does not match what was given, or a model built in a
+population this patient does not belong to. Saying so is more useful than
+drawing a confident line through implausible data.
+
+The optimiser itself is checked rather than assumed. `test-core.cjs`
+reconstructs `mapEstimate`'s exact objective — including the
+log(variance) normalisation term, whose omission made an earlier
+hand-rolled probe report a spurious improvement — and confirms that random
+perturbation around the returned solution cannot beat it, on an extreme
+patient, a near-typical one and a single-sample case.
+
 ## Scope
 
 This is a simulation and teaching tool, not a medical device. It has no

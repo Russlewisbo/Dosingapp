@@ -469,13 +469,22 @@ function boot(search) {
   ok('MAP estimation produced a result', mapOut.length > 0 && /CL/.test(mapOut),
      mapOut.slice(0, 60).replace(/\s+/g, ' '));
 
-  ok('individual forecast is labelled in the legend',
-     /MAP individual forecast/.test(d.getElementById('legConc').textContent),
+  // Asserted on the substring both views share: the fitted-period view
+  // (now the default after a fit) labels it "MAP individual", the forecast
+  // view "MAP individual forecast".
+  ok('the individual curve is labelled in the legend',
+     /MAP individual/.test(d.getElementById('legConc').textContent),
      d.getElementById('legConc').textContent.slice(0, 90));
 
-  // Switching to the whole-course view must not drop the overlay; its
-  // geometry (staying inside the axes) is checked in test-layout.cjs,
-  // whose canvas mock records coordinates.
+  // The whole-course toggle is a property of the FORECAST view — the
+  // fitted-period view always plots the whole sampled record — so this
+  // half has to leave the fitted view first.
+  const fvA = d.getElementById('fitView');
+  fvA.checked = false;
+  fvA.dispatchEvent(new w.Event('change', { bubbles: true }));
+  ok('the forecast view labels the overlay as a forecast',
+     /MAP individual forecast/.test(d.getElementById('legConc').textContent),
+     d.getElementById('legConc').textContent.slice(0, 90));
   const pw = d.getElementById('plotWhole');
   pw.checked = true;
   pw.dispatchEvent(new w.Event('change', { bubbles: true }));
@@ -591,7 +600,8 @@ function boot(search) {
   setRow(0, 25, 42); setRow(1, 35, 26);
   d.getElementById('runMap').dispatchEvent(new w.Event('click', { bubbles: true }));
   ok('overlay is present after a fit',
-     /MAP individual forecast/.test(d.getElementById('legConc').textContent));
+     /MAP individual/.test(d.getElementById('legConc').textContent),
+     d.getElementById('legConc').textContent.slice(0, 90));
 
   const bt = d.getElementById('bayesOn');
   bt.checked = false;
@@ -608,7 +618,8 @@ function boot(search) {
   bt.checked = true;
   bt.dispatchEvent(new w.Event('change', { bubbles: true }));
   ok('switching back on restores the overlay without refitting',
-     /MAP individual forecast/.test(d.getElementById('legConc').textContent));
+     /MAP individual/.test(d.getElementById('legConc').textContent),
+     d.getElementById('legConc').textContent.slice(0, 90));
 
   // URL round-trip.
   const off = boot('?model=van_thomson2009&target=auc400&bayes=0&n=120').d;
@@ -832,6 +843,89 @@ function boot(search) {
      setup.includes(`${words[levels]} levels`),
      `${levels} numbered sections; header says ` +
      ((setup.match(/^(\w+) levels/m) || ['?'])[0]));
+}
+
+/* ---- The fitted-period view: population prediction, MAP individual and
+   the measurements on one time base. The observations are the part the
+   forecast view structurally cannot show, because its axis is a dosing
+   interval of the regimen being evaluated, not the record the samples
+   were taken under. ---- */
+{
+  const mkFit = (q, rows, opts) => {
+    const b = boot(q || '?model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&n=300');
+    const { w, d } = b;
+    const ev = (el, t) => el.dispatchEvent(new w.Event(t, { bubbles: true }));
+    const sv = (sel, v) => { const e = d.querySelector(sel); e.value = v; ev(e, 'input'); };
+    sv('#tdmDose', (opts && opts.dose) || 1000);
+    sv('#tdmTau', (opts && opts.tau) || 12);
+    sv('#tdmTinf', (opts && opts.tinf) || 1);
+    sv('#tdmN', (opts && opts.n) || 4);
+    rows.forEach((r, i) => {
+      if (i > 0) ev(d.getElementById('addTdm'), 'click');
+      sv(`[data-t="${i}"]`, r[0]);
+      sv(`[data-c="${i}"]`, r[1]);
+    });
+    const rec = d.getElementById('cvConc').__ctx._rec;
+    rec.texts.length = 0;
+    ev(d.getElementById('runMap'), 'click');
+    return { ...b, ev, sv, rec };
+  };
+
+  {
+    const { d, rec, ev } = mkFit(null, [[11.5, 9], [2, 26]]);
+    const leg = d.getElementById('legConc').textContent;
+    ok('the fitted-period view is the default once a MAP fit exists',
+       /Measured concentration/.test(leg) && /Population prediction/.test(leg), leg.slice(0, 120));
+    ok('the fitted view labels its axis as the sampled record, not a dosing interval',
+       rec.texts.some(s => /sampled record|from first dose/.test(String(s))),
+       (rec.texts.find(s => /Time/.test(String(s))) || 'none').toString());
+    ok('the MAP individual and the population median are both drawn',
+       /MAP individual/.test(leg) && /90% prediction interval/.test(leg));
+    const note = d.getElementById('courseNote').textContent;
+    ok('the note quantifies the clearance shift the samples produced',
+       /clears the drug/.test(note) && /L\/h/.test(note), note.slice(0, 130));
+    ok('the population column is reported beside the individual',
+       /On the sampled record/.test(d.getElementById('mapOut').textContent));
+
+    // Unticking must return to the forecast view and STOP drawing points,
+    // because those observations belong to a different dosing history.
+    const fv = d.getElementById('fitView');
+    rec.texts.length = 0;
+    fv.checked = false; ev(fv, 'change');
+    ok('unticking returns to the forecast under the displayed regimen',
+       rec.texts.some(s => /dosing interval/.test(String(s))) &&
+       !/Measured concentration/.test(d.getElementById('legConc').textContent),
+       (rec.texts.find(s => /Time/.test(String(s))) || 'none').toString());
+  }
+
+  {
+    // A sample ABOVE the population band must stay inside the axis; the
+    // individual curve had exactly this clipping bug before.
+    const { d } = mkFit(null, [[11.5, 18], [2, 42]]);
+    ok('a prior-data conflict is flagged rather than presented as a good fit',
+       /samples and the population prior disagree/.test(d.getElementById('mapOut').textContent));
+  }
+  {
+    const { d } = mkFit(null, [[11.5, 9], [2, 26]]);
+    ok('a plausible fit is NOT flagged as a conflict',
+       !/samples and the population prior disagree/.test(d.getElementById('mapOut').textContent));
+  }
+  {
+    // Disabling Bayesian forecasting must take the fitted view with it.
+    const { d, ev } = mkFit(null, [[11.5, 9], [2, 26]]);
+    const b = d.getElementById('bayesOn');
+    b.checked = false; ev(b, 'change');
+    ok('turning Bayesian forecasting off also leaves the fitted-period view',
+       !/Measured concentration/.test(d.getElementById('legConc').textContent),
+       d.getElementById('legConc').textContent.slice(0, 90));
+  }
+  {
+    const { d } = mkFit(null, [[11.5, 9], [2, 26]]);
+    d.getElementById('mkEmbed').dispatchEvent(new (d.defaultView.Event)('click', { bubbles: true }));
+    ok('the embed URL round-trips the fitted-view setting when it is off',
+       !/fitview=0/.test(d.getElementById('embedOut').value),
+       'default on, so absent from the URL');
+  }
 }
 
 console.log(fails === 0 ? '\nALL APP TESTS PASSED' : `\n${fails} APP TEST(S) FAILED`);

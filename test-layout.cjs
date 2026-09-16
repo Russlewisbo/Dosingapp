@@ -288,5 +288,46 @@ console.log('\n— aminoglycoside modules (peaks are an order of magnitude above
   audit('tobramycin single regimen', d.getElementById('cvConc'));
 }
 
+console.log('\n\u2014 fitted-period view (population band, MAP individual and sample points) \u2014');
+{
+  const fitBoot = (q, rows, width) => {
+    const b = boot(q, width);
+    const { w, d } = b;
+    const ev = (el, t) => el.dispatchEvent(new w.Event(t, { bubbles: true }));
+    const sv = (sel, v) => { const e = d.querySelector(sel); e.value = v; ev(e, 'input'); };
+    sv('#tdmDose', 1000); sv('#tdmTau', 12); sv('#tdmTinf', 1); sv('#tdmN', 4);
+    rows.forEach((r, i) => {
+      if (i > 0) ev(d.getElementById('addTdm'), 'click');
+      sv(`[data-t="${i}"]`, r[0]); sv(`[data-c="${i}"]`, r[1]);
+    });
+    ev(d.getElementById('runMap'), 'click');
+    return d;
+  };
+  const Q = '?model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&n=300';
+
+  {
+    const d = fitBoot(Q, [[11.5, 9], [2, 26]]);
+    audit('fitted period, typical patient', d.getElementById('cvConc'));
+  }
+  {
+    // A sample far ABOVE the population band: the y-axis must include the
+    // observations, or the point is clipped off the top of the canvas —
+    // the same defect the individual curve had before it was scaled in.
+    const d = fitBoot(Q, [[11.5, 18], [2, 42]]);
+    audit('fitted period, sample above the band', d.getElementById('cvConc'));
+  }
+  {
+    // Log axis with a low trough: the band floor and the points both have
+    // to survive the log transform.
+    const d = fitBoot(Q + '&logy=1', [[11.5, 1.2], [2, 22]]);
+    audit('fitted period, log y with a low trough', d.getElementById('cvConc'));
+  }
+  {
+    const d = fitBoot('?mode=widget&panel=conc&model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&n=200',
+                      [[11.5, 9], [2, 26]], 380);
+    audit('fitted period at 380 px', d.getElementById('cvConc'));
+  }
+}
+
 console.log(fails === 0 ? '\nLAYOUT AUDIT PASSED' : `\n${fails} LAYOUT CHECK(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);
