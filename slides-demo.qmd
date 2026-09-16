@@ -91,6 +91,46 @@ nonparametric model cannot simply be sampled as a normal.
 
 ---
 
+## Why once daily? {background-iframe="mipd-lab.html?mode=widget&preset=gen-od&n=800&title=Gentamicin%20420%20mg%2Fday%2C%20three%20intervals" background-interactive="true"}
+
+::: {.notes}
+Identical daily dose, three intervals, one model (Xuan 2004, built
+entirely on once-daily dosing). The joint target is Cmax/MIC >= 10 **and**
+trough <= 2 mg/L, scored on the same simulated patient.
+
+The separation is almost all in the PEAK component: 100% at q24h against
+roughly 10% at q8h. AUC is unchanged across the three — so this is not a
+dose-intensity effect, it is entirely the shape of the profile. Ask the
+room which component they expected to move.
+:::
+
+## The same dose at CLcr 45 {background-iframe="mipd-lab.html?mode=widget&preset=gen-renal&n=800&title=Gentamicin%20in%20renal%20impairment" background-interactive="true"}
+
+::: {.notes}
+Same 420 mg q24h regimen, now in a 70-year-old with SCr 1.5 mg/dL. It
+fails — and it fails on the TROUGH, with the peak still at 100%.
+
+Two candidate fixes are on the plot. Extending to q48h keeps the peak
+intact and recovers the trough. Halving the dose instead gives up peak
+attainment as well and recovers the trough less. That asymmetry is the
+whole argument for extending the interval rather than cutting the dose,
+and it is visible in the component breakdown rather than having to be
+asserted.
+:::
+
+## Amikacin: the peak has to move {background-iframe="mipd-lab.html?mode=widget&preset=amk-icu&n=800&title=Amikacin%20in%20a%20septic%20ICU%20patient" background-interactive="true"}
+
+::: {.notes}
+Romano 1998, a medical-ICU model whose covariates are categorical: trauma
+raises clearance by 22.5%, sepsis raises the volume of distribution by
+24.6%. Toggle the sepsis box live and watch the peak fall as the volume
+expands.
+
+At MIC 4, Cmax/MIC >= 10 needs 40 mg/L, and 1 g once daily does not get
+there. This is the dose-escalation argument for amikacin, and the trough
+ceiling (5 mg/L for amikacin, not 2) is what bounds it.
+:::
+
 ## Vancomycin: an AUC target instead
 
 <iframe src="mipd-lab.html?mode=widget&panel=conc&summary=1&model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&n=800&seed=3&title=Vancomycin%201%20g%20q12h%20%E2%80%94%20AUC%20400%E2%80%93600"

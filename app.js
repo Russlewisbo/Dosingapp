@@ -214,7 +214,8 @@
     cg: 'CLcr (Cockcroft-Gault)',
     cysc: 'eGFR (CKD-EPI cystatin C)',
     ckdepi: 'eGFR (CKD-EPI creatinine)',
-    mdrd: 'GFR (MDRD, 4-variable)'
+    mdrd: 'GFR (MDRD, 4-variable)',
+    jelliffe: 'CLcr (Jelliffe 1973, BSA-corrected)'
   };
   function renalOf(m, cIn) {
     var c = cIn || S.cov;
@@ -225,6 +226,13 @@
     if (m.renal === 'ckdepi') {
       return { egfr: P.ckdEpiCr({ scr: c.scr, scrUnit: c.scrUnit,
                                   age: c.age, sex: c.sex }), kind: 'ckdepi' };
+    }
+    if (m.renal === 'jelliffe') {
+      // Rescaled to the patient's own BSA, because the model's covariate
+      // is an absolute clearance rather than a per-1.73m2 value.
+      return { crcl: P.jelliffe({ scr: c.scr, scrUnit: c.scrUnit, age: c.age,
+                                  sex: c.sex, wt: c.wt, ht: c.ht,
+                                  absolute: true }), kind: 'jelliffe' };
     }
     if (m.renal === 'mdrd') {
       return { egfr: P.mdrd({ scr: c.scr, scrUnit: c.scrUnit,
@@ -240,6 +248,9 @@
     var r = renalOf(m, src);
     if (r.crcl != null) c.crcl = r.crcl;
     if (r.egfr != null) c.egfr = r.egfr;
+    // Fat-free mass (Janmahasatian) is a derived size descriptor, not an
+    // entered covariate: Hennig 2013 scales every parameter by it.
+    c.ffm = P.ffmJanmahasatian({ wt: c.wt, ht: c.ht, sex: c.sex });
     return c;
   }
 
@@ -280,7 +291,9 @@
     rd:  function (c) { c.rd = (c.rd || 0) + 900; },
     ecmo: function (c) { c.ecmo = !c.ecmo; },
     rrt: function (c) { c.rrt = !c.rrt; },
-    dialysis: function (c) { c.dialysis = c.dialysis === 'cont' ? 'none' : 'cont'; }
+    dialysis: function (c) { c.dialysis = c.dialysis === 'cont' ? 'none' : 'cont'; },
+    trauma: function (c) { c.trauma = !c.trauma; },
+    sepsis: function (c) { c.sepsis = !c.sepsis; }
   };
   var PARAM_KEYS = ['CL', 'V1', 'Q', 'V2'];
 
@@ -310,7 +323,8 @@
   var COV_LABEL = {
     wt: 'Weight', age: 'Age', ht: 'Height', sex: 'Sex',
     scr: 'Creatinine', cysc: 'Cystatin C', alb: 'Albumin',
-    rd: 'Residual diuresis', ecmo: 'ECMO', rrt: 'RRT', dialysis: 'Dialysis modality'
+    rd: 'Residual diuresis', ecmo: 'ECMO', rrt: 'RRT', dialysis: 'Dialysis modality',
+    trauma: 'Trauma', sepsis: 'Sepsis'
   };
   var PARAM_LABEL = { CL: 'CL', V1: 'V\u2081', Q: 'Q', V2: 'V\u2082' };
 
@@ -353,9 +367,16 @@
                 act[k].map(function (p) { return PARAM_LABEL[p]; }).join('/');
             }).join(' &middot; ')
           : 'none') +
-        '. Renal function is computed with ' +
-        (RENAL_LABEL[(renalOf(m) || {}).kind] || 'Cockcroft-Gault') +
-        ', so creatinine, age, sex and weight can act through it as well as directly.';
+        (m.renalDisplayOnly
+          ? '. This model does not take a creatinine clearance as input: ' +
+            'creatinine acts through a ratio to an age- and sex-typical ' +
+            'normal value, and size through fat-free mass. The ' +
+            (RENAL_LABEL[(renalOf(m) || {}).kind] || 'Cockcroft-Gault') +
+            ' figure shown alongside is for orientation only.'
+          : '. Renal function is computed with ' +
+            (RENAL_LABEL[(renalOf(m) || {}).kind] || 'Cockcroft-Gault') +
+            ', so creatinine, age, sex and weight can act through it as ' +
+            'well as directly.');
     }
   }
 
@@ -536,6 +557,8 @@
     if ($('dialysisBlock')) $('dialysisBlock').classList.toggle('hidden', !has('dialysis'));
     if ($('rdBlock')) $('rdBlock').classList.toggle('hidden', !has('rd'));
     if ($('albBlock')) $('albBlock').classList.toggle('hidden', !has('alb'));
+    if ($('traumaBlock')) $('traumaBlock').classList.toggle('hidden', !has('trauma'));
+    if ($('sepsisBlock')) $('sepsisBlock').classList.toggle('hidden', !has('sepsis'));
     annotateCovariates(m);
     if ($('modelCite')) {
       $('modelCite').innerHTML = m.source +
@@ -678,10 +701,20 @@
     var pl = new Plot(cv, { ylog: S.logy });
     var r0 = results[0],
         whole = !!r0.plotWhole,
-        // Whole-course plots keep absolute time from the first dose;
-        // single-interval plots are shifted to start at zero.
-        t0 = whole ? 0 : r0.tA,
-        tspan = (whole ? r0.tPlotB : r0.tB) - t0,
+        // Whole-course plots keep absolute time from the first dose.
+        // Single-interval plots are shifted to start at zero — and each
+        // regimen by ITS OWN interval start, not by the first regimen's.
+        // Comparing q24h against q8h dosed to their own steady states
+        // gives them different absolute evaluation windows, so a shared
+        // offset threw the shorter-interval curves off the left edge.
+        shiftOf = function (r) { return whole ? 0 : r.tA; },
+        t0 = shiftOf(r0),
+        // In both modes the window must cover the LONGEST regimen on the
+        // plot, not the first one: a q48h arm runs twice as far as the
+        // q24h arm it is being compared against.
+        tspan = results.reduce(function (mx, r) {
+          return Math.max(mx, whole ? r.tPlotB : (r.tB - r.tA));
+        }, 0),
         ymax = 0;
     results.forEach(function (r) {
       r.hi.forEach(function (v) { if (v > ymax) ymax = v; });
@@ -740,7 +773,8 @@
     }
 
     results.forEach(function (r) {
-      var xs = r.times.map(function (x) { return x - t0; });
+      var ts = shiftOf(r),
+          xs = r.times.map(function (x) { return x - ts; });
       if (results.length === 1) {
         // BOTH edges must be clamped to the axis floor, not just the
         // lower one: a whole-course plot starts at t = 0 where the
@@ -806,6 +840,7 @@
         '<td class="num">' + fmt(e.tAbove.median) + ' (' + fmt(e.tAbove.p5, 0) + '–' + fmt(e.tAbove.p95, 0) + ')</td>' +
         '<td class="num">' + fmt(e.auc24.median, 0) + ' (' + fmt(e.auc24.p5, 0) + '–' + fmt(e.auc24.p95, 0) + ')</td>' +
         '<td class="num">' + fmt(e.cmax.median) + '</td>' +
+        '<td class="num">' + (e.peak1h ? fmt(e.peak1h.median) : '\u2014') + '</td>' +
         '<td class="num">' + fmt(e.cmin.median, 2) + '</td>' +
         '<td class="num">' + (P.pkpdBreakpoint(r.pta, S.ptaThresh) == null
             ? '&lt;' + M.LADDER[0] : P.pkpdBreakpoint(r.pta, S.ptaThresh)) + '</td>' +
@@ -818,9 +853,23 @@
         '<th>Regimen</th><th class="num">PTA at MIC ' + S.mic + '</th>' +
         '<th class="num">%fT&gt;MIC med (90% PI)</th>' +
         '<th class="num">AUC₀₋₂₄ med (90% PI)</th>' +
-        '<th class="num">Cmax</th><th class="num">Cmin</th>' +
+        '<th class="num">Cmax</th><th class="num">1-h peak</th>' +
+        '<th class="num">Cmin</th>' +
         '<th class="num">Breakpoint</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      (results[0].components
+        ? '<div class="note"><b>Joint target, by component.</b> ' +
+          results.map(function (r) {
+            return r.label + ' \u2014 ' +
+              r.components.map(function (c) {
+                return c.label + ': <b>' + fmt(c.pta) + '%</b>';
+              }).join(', ') + ' (both together ' + fmt(r.ptaAtRefMic) + '%)';
+          }).join('<br>') +
+          '<br>The joint figure is the fraction of simulated patients meeting ' +
+          'every component at once, so it is lower than any single one \u2014 ' +
+          'the patient who reaches the peak may be the one who breaches the ' +
+          'trough.</div>'
+        : '') +
       '<p class="cite" style="margin:8px 0 0">Exposure metrics are computed over ' +
         // The window is selectable, so this sentence must describe the
         // window actually used rather than assert steady state.
@@ -828,7 +877,10 @@
           ? 'the final 24 h of the infusion'
           : 'dose ' + results[0].evalDose + ' of ' + results[0].nDoses +
             (results[0].atSteadyState ? ' (steady state)' : ' (pre–steady state)')) +
-        '. AUC and Cmax/Cmin are total drug; %fT&gt;MIC uses ' +
+        '. AUC and Cmax/Cmin are total drug; the 1-h peak is sampled one hour ' +
+        'after the end of the infusion, which is the aminoglycoside TDM ' +
+        'convention and runs well below the end-of-infusion Cmax; ' +
+        '%fT&gt;MIC uses ' +
         'free drug (fu = ' + m.fu + '). Breakpoint = highest ladder MIC with PTA ≥ ' +
         S.ptaThresh + '%.</p>' +
       // Nonparametric models are sampled on the natural scale, where a
@@ -892,6 +944,18 @@
     var pr = modelResolved().params(covFull());
     rows += '<div class="kv"><span>Typical CL</span><span>' +
             fmt(pr.CL) + ' L/h</span></div>';
+    if (m.renalDisplayOnly) {
+      rows += '<div class="cite" style="margin-top:5px">The clearance above is ' +
+              'not driven by this creatinine clearance: the model scales ' +
+              'renal function through a serum-creatinine ratio and size ' +
+              'through fat-free mass. The estimate is shown for orientation ' +
+              'only.</div>';
+    }
+    if (m.id === 'tob_hennig2013') {
+      rows += '<div class="kv"><span>Fat-free mass</span><span>' +
+              fmt(P.ffmJanmahasatian({ wt: S.cov.wt, ht: S.cov.ht, sex: S.cov.sex })) +
+              ' kg</span></div>';
+    }
     host.innerHTML = rows;
   }
 
@@ -1031,6 +1095,8 @@
     if (!S.bayes) p.push('bayes=0');
     if (S.cov.ecmo) p.push('ecmo=1');
     if (S.cov.rrt) p.push('rrt=1');
+    if (S.cov.trauma) p.push('trauma=1');
+    if (S.cov.sepsis) p.push('sepsis=1');
     if (S.cov.dialysis && S.cov.dialysis !== 'none') p.push('dialysis=' + S.cov.dialysis);
     if (S.logy) p.push('logy=1');
     var file = window.location.pathname.split('/').pop() || 'mipd-lab.html';
@@ -1066,6 +1132,11 @@
       ec.checked = !!S.cov.ecmo;
       ec.onchange = function () { S.cov.ecmo = ec.checked; syncModel(false); run(); };
     }
+    [['trauma', 'trauma'], ['sepsis', 'sepsis']].forEach(function (p) {
+      var el = $(p[0]); if (!el) return;
+      el.checked = !!S.cov[p[1]];
+      el.onchange = function () { S.cov[p[1]] = el.checked; syncModel(false); run(); };
+    });
     var rr = $('rrt');
     if (rr) {
       rr.checked = !!S.cov.rrt;
@@ -1155,15 +1226,38 @@
 
   function init() {
     if (WIDGET) document.body.classList.add('widget');
+
+    /* ?preset=<id> loads a named teaching scenario from the library:
+       model, target, the regimens being compared, the covariates and the
+       MIC, in one parameter. Explicit URL parameters still win, so a
+       preset can be used as a starting point and then adjusted — which is
+       what makes it usable as a slide URL. */
+    var PRE = null;
+    if (Q.preset) {
+      (M.PRESETS || []).forEach(function (p) { if (p.id === Q.preset) PRE = p; });
+    }
+    if (PRE) {
+      if (!Q.model) S.modelId = PRE.model;
+      if (!Q.target && PRE.target) S.targetId = PRE.target;
+    }
+
     var m0 = null;
     M.MODELS.forEach(function (x) { if (x.id === S.modelId) m0 = x; });
     if (!m0) { S.modelId = M.MODELS[0].id; m0 = M.MODELS[0]; }
+    // A preset's covariates and MIC become the defaults for the reads below.
+    var PC = (PRE && PRE.cov) || {};
 
     S.cov = {
-      wt: num(Q.wt, 80), age: num(Q.age, 60), ht: num(Q.ht, 172),
-      sex: Q.sex === 'F' ? 'F' : 'M',
-      scr: num(Q.scr, 1.0), scrUnit: Q.scrUnit === 'umol/L' ? 'umol/L' : 'mg/dL',
-      cysc: num(Q.cysc, 1.0), ecmo: bool(Q.ecmo, false),
+      wt: num(Q.wt, PC.wt != null ? PC.wt : 80),
+      age: num(Q.age, PC.age != null ? PC.age : 60),
+      ht: num(Q.ht, PC.ht != null ? PC.ht : 172),
+      sex: (Q.sex || PC.sex) === 'F' ? 'F' : 'M',
+      scr: num(Q.scr, PC.scr != null ? PC.scr : 1.0),
+      scrUnit: (Q.scrUnit || PC.scrUnit) === 'umol/L' ? 'umol/L' : 'mg/dL',
+      cysc: num(Q.cysc, PC.cysc != null ? PC.cysc : 1.0),
+      ecmo: bool(Q.ecmo, !!PC.ecmo),
+      trauma: bool(Q.trauma, !!PC.trauma),
+      sepsis: bool(Q.sepsis, !!PC.sepsis),
       rrt: bool(Q.rrt, false),
       dialysis: (['none', 'cont', 'semicont'].indexOf(Q.dialysis) >= 0
                  ? Q.dialysis : 'none'),
@@ -1171,10 +1265,18 @@
       // O'Jeanson cohort, which is the value its typical clearance is
       // centred on, so it is the neutral default.
       rd: num(Q.rd, 845),
-      alb: num(Q.alb, 2.8)
+      alb: num(Q.alb, PC.alb != null ? PC.alb : 2.8)
     };
-    S.mic = num(Q.mic, m0.defaultMic);
+    S.mic = num(Q.mic, PRE && PRE.mic != null ? PRE.mic : m0.defaultMic);
     S.regimens = defaultRegimens();
+    if (PRE && PRE.regimens && PRE.regimens.length && !Q.dose) {
+      S.regimens = PRE.regimens.slice(0, 3).map(function (r, i) {
+        var o = { label: r.label || 'ABC'.charAt(i), on: true };
+        if (r.mode === 'ci') { o.mode = 'ci'; o.dose24 = r.dose24; }
+        else { o.dose = r.dose; o.tau = r.tau; o.tinf = r.tinf; }
+        return o;
+      });
+    }
     if (Q.crcl) setRenalDirect(num(Q.crcl, 80));
     if (Q.egfr) setRenalDirect(num(Q.egfr, 80));
 

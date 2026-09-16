@@ -62,6 +62,32 @@
     id: 'ft98x4', type: 'ftmic', threshold: 98, micMultiplier: 4,
     label: '98% fT>4\u00d7MIC'
   };
+  /* ---- Aminoglycoside targets ----
+     Aminoglycosides kill in a concentration-dependent way, so efficacy
+     tracks the peak-to-MIC ratio, not time above MIC. Toxicity tracks
+     accumulation, so a trough CEILING sits alongside it. Thresholds are
+     the defaults documented in TDMx's own module reference manuals
+     (Settings > PK Table Colour Coding): Cmax/MIC 10, AUC24h/MIC 70,
+     and a target trough of 2 mg/L for gentamicin and tobramycin, 5 mg/L
+     for amikacin. */
+  var T_CMAX10 = { id: 'cmax10', type: 'cmaxmic', threshold: 10,
+                   label: 'C\u2098\u2090\u2093/MIC \u2265 10' };
+  var T_AUCMIC70 = { id: 'aucmic70', type: 'aucmic', threshold: 70,
+                     label: 'AUC\u2080\u208b\u2082\u2084/MIC \u2265 70' };
+  function troughCeil(hi) {
+    return { id: 'cmin' + String(hi).replace('.', '_'), type: 'cminceil', hi: hi,
+             label: 'C\u2098\u1d62\u2099 \u2264 ' + hi + ' mg/L' };
+  }
+  // The once-daily argument in one target: the peak must be high AND the
+  // trough low, in the SAME patient.
+  function onceDaily(hi) {
+    return { id: 'od' + String(hi).replace('.', '_'), type: 'composite',
+             label: 'C\u2098\u2090\u2093/MIC \u2265 10 and C\u2098\u1d62\u2099 \u2264 ' + hi + ' mg/L',
+             all: [T_CMAX10, troughCeil(hi)] };
+  }
+  var AG_TARGETS_2 = [onceDaily(2), T_CMAX10, troughCeil(2), T_AUCMIC70];
+  var AG_TARGETS_5 = [onceDaily(5), T_CMAX10, troughCeil(5), T_AUCMIC70];
+
   var MERO_TARGETS = [T_FT40, T_FT50, T_FT100, T_FT100x4];
   // Li 2006 used 20% fT>MIC (bacteriostatic) and 40% fT>MIC (bactericidal);
   // Ehmann 2019 used 98% fT>MIC (and 98% fT>4xMIC for continuous infusion),
@@ -648,6 +674,232 @@
       targets: [T_FT50, T_FT100, T_FT60, T_FT100x4],
       defaultRegimen: { dose: 2000, tau: 8, tinf: 3 },
       defaultMic: 8
+    },
+
+    /* =================================================================
+       GENTAMICIN — Xuan, Nicolau & Nightingale 2004
+       Two-compartment, 939 hospitalised adults (16-96 y) receiving
+       ONCE-DAILY gentamicin; 1294 concentrations, NONMEM V, ADVAN3
+       TRANS1 (so the model is parameterised as CL, V1, K12, K21).
+       Table 2, final model:
+         Theta1 0.047  -> CL (L/h) = 0.047 x CLcr (mL/min)
+         Theta2 0.28   -> V1 (L)   = 0.28  x total body weight (kg)
+         Theta3 0.092  -> K12 (1/h)
+         Theta4 0.071  -> K21 (1/h)
+       Inter-individual variability (%CV): CL 29.6, V 5.8, K12 69.9,
+       K21 63.9. Residual error: proportional 23.7%, additive 0.23 mg/L.
+       The paper states the exponential error model best described IIV.
+       CLcr is Cockcroft-Gault on TOTAL body weight (paper, section 3).
+       Reported mean population CL 4.32 L/h and V1 19.6 L reproduce at
+       the cohort means (CLcr 92 mL/min, 70 kg) - asserted in validate.cjs.
+       ================================================================= */
+    {
+      id: 'gen_xuan2004',
+      drug: 'Gentamicin',
+      label: 'Xuan 2004 \u2014 2-cmt, adults on once-daily dosing',
+      source: 'Xuan D, Nicolau DP, Nightingale CH. Int J Antimicrob Agents ' +
+              '2004;23(3):291-5, Table 2.',
+      doi: '10.1016/j.ijantimicag.2003.07.010',
+      ncmt: 2,
+      matrix: 'total plasma',
+      // Aminoglycoside protein binding is low and the paper applies no
+      // correction; concentrations are treated as active drug.
+      fu: 1.0,
+      renal: 'cg',
+      covariates: ['wt', 'age', 'sex', 'scr'],
+      sampling: 'micro',
+      microParams: function (c) {
+        return {
+          CL: 0.047 * Math.max(1, c.crcl),
+          V1: 0.28 * c.wt,
+          K12: 0.092,
+          K21: 0.071
+        };
+      },
+      toMacro: function (d) {
+        // Q = K12 x V1 and, at equilibrium, K12 x V1 = K21 x V2.
+        var q = d.K12 * d.V1;
+        if (!(d.CL > 0) || !(d.V1 > 0) || !(q > 0) || !(d.K21 > 0)) return null;
+        return { CL: d.CL, V1: d.V1, Q: q, V2: q / d.K21 };
+      },
+      params: function (c) {
+        return this.toMacro(this.microParams(c));
+      },
+      iiv: { CL: 0.296, V1: 0.058, K12: 0.699, K21: 0.639 },
+      iivScale: 'cv',
+      err: { add: 0.23, prop: 0.237 },
+      bayesian: true,
+      note: 'Variability is published on the micro-constants (CL, V1, K12, ' +
+            'K21), so it is sampled on that scale and converted to Q and V2 ' +
+            'afterwards \u2014 declaring K12\u2019s spread on Q instead would ' +
+            'misstate the peripheral compartment. Two caveats from the ' +
+            'source table: IIV on V1 is 5.8% with a relative standard error ' +
+            'of 350%, i.e. essentially unidentified, and K21 has an RSE of ' +
+            '48.6% with a 95% CI of 0.0033-0.14, so the distribution phase ' +
+            'is poorly determined. Built entirely on once-daily dosing, ' +
+            'which is what makes it the right model for that comparison.',
+      targets: AG_TARGETS_2,
+      defaultRegimen: { dose: 490, tau: 24, tinf: 1 },
+      defaultMic: 1
+    },
+
+    /* =================================================================
+       AMIKACIN — Romano et al. 1998
+       One-compartment, 120 medical ICU patients (plus 38 for external
+       validation), NONMEM.
+       Table III (final model parameter estimates):
+         Theta1 0.934 -> CL (L/h) = 0.934 x CLcr (L/h) x (1 + 0.225 x Trauma)
+         Theta2 0.225 -> trauma effect on CL
+         Theta3 0.393 -> Vd (L)   = 0.393 x TBW (kg) x (1 + 0.246 x Sepsis)
+         Theta4 0.246 -> sepsis effect on Vd
+       (Table II states the same final model rounded: 0.93 and 0.22 on CL,
+       0.39 and 0.24 on Vd; the Table III estimates are used here.)
+       Interindividual variability: CV_CL 28.2%, CV_Vd 23.2%.
+       Residual: CV_sigma 22.0%.
+       CLcr is the Jelliffe bedside estimate (paper reference 10 =
+       Jelliffe RW, Ann Intern Med 1973), which returns mL/min/1.73m^2.
+       Clearance coefficient near 1.0 on CLcr in L/h is the physiological
+       check: amikacin is cleared essentially by glomerular filtration.
+       ================================================================= */
+    {
+      id: 'amk_romano1998',
+      drug: 'Amikacin',
+      label: 'Romano 1998 \u2014 1-cmt, medical ICU, trauma and sepsis',
+      source: 'Romano S, Fdez de Gatta MM, Calvo V, Mendez E, ' +
+              'Dom\u00ednguez-Gil A, Lanao JM. Clin Drug Investig ' +
+              '1998;15(5):435-44, Tables II and III.',
+      doi: '10.2165/00044011-199815050-00008',
+      ncmt: 1,
+      matrix: 'total plasma',
+      fu: 1.0,
+      renal: 'jelliffe',
+      covariates: ['wt', 'age', 'sex', 'ht', 'scr', 'trauma', 'sepsis'],
+      params: function (c) {
+        // The covariate is CLcr expressed in L/h.
+        var clcrLh = Math.max(0.1, c.crcl) * 0.06;
+        return {
+          CL: 0.934 * clcrLh * (1 + 0.225 * (c.trauma ? 1 : 0)),
+          V1: 0.393 * c.wt * (1 + 0.246 * (c.sepsis ? 1 : 0))
+        };
+      },
+      iiv: { CL: 0.282, V1: 0.232 },
+      iivScale: 'cv',
+      err: { add: null, prop: 0.220 },
+      bayesian: false,
+      bayesianNote: 'MAP forecasting is disabled for this model. The paper ' +
+            'states that an ADDITIVE residual error model was selected ' +
+            '(\u201cthe additive error model for residual variability\u201d), ' +
+            'yet Table III reports the residual as CV_sigma = 22.0%, a ' +
+            'proportional quantity. The scale of the residual term is ' +
+            'therefore ambiguous in the published record, and a wrong ' +
+            'residual variance silently changes how strongly TDM samples ' +
+            'outweigh the prior. Monte Carlo target attainment is ' +
+            'unaffected \u2014 it uses only the fixed effects and the ' +
+            'interindividual terms, which is how the paper itself used ' +
+            'this model.',
+      note: 'Clearance is driven by the JELLIFFE bedside creatinine ' +
+            'clearance (1973), not Cockcroft-Gault, and the two are not ' +
+            'interchangeable here: Cockcroft-Gault scales linearly with ' +
+            'body weight whereas Jelliffe scales with body surface area, ' +
+            'so their ratio moves from about 1.13 at 45 kg to 0.66 at ' +
+            '130 kg (same age and creatinine). Substituting Cockcroft-Gault ' +
+            'would therefore overestimate amikacin clearance by roughly a ' +
+            'third in a large patient. Age and creatinine, by contrast, ' +
+            'barely change the ratio. Jelliffe returns mL/min/1.73m\u00b2 and is ' +
+            'rescaled here to the patient\u2019s own body surface area ' +
+            '(Mosteller) because the model\u2019s covariate is an absolute ' +
+            'clearance. Interindividual variability was published under a ' +
+            'PROPORTIONAL model, \u03b8(1+\u03b7); it is sampled here ' +
+            'log-normally with the same coefficient of variation, which ' +
+            'matches the published spread and cannot produce a negative ' +
+            'clearance. Trauma raises clearance by 22.5%; sepsis raises the ' +
+            'volume of distribution by 24.6%.',
+      targets: AG_TARGETS_5,
+      defaultRegimen: { dose: 1000, tau: 24, tinf: 0.5 },
+      defaultMic: 4
+    },
+
+    /* =================================================================
+       TOBRAMYCIN — Hennig et al. 2013
+       Two-compartment meta-analysis of eight centres: 465 adults and
+       children with cystic fibrosis and 267 without (5605 observations).
+       Table 2 (final model) and equations 6-9:
+         CL   = theta_CL,sex x (FFM/70)^0.952
+                             x [1 + theta_AGE x (AGE - 18)]
+                             x (SCRmean/SCR)^0.222
+         V1   = theta_V1,sex x (FFM/70)
+         Q    = 1.5 x (FFM/70)^0.952
+         V2   = 10.0 x (FFM/70)
+       theta_CL: 8.1 (female) / 9.4 (male) L/h per 70 kg FFM
+       theta_V1: 20.1 (female) / 25.1 (male) L per 70 kg FFM
+       theta_AGE: -0.010 (>=18 y), -0.021 (<18 y)
+       BSV (CV%): CL 25.9, V1 15.2, Q 41.8, V2 58.5;
+       CL-V1 correlation 65.8%. Proportional residual error 20.4%.
+       FFM is Janmahasatian 2005 (paper reference 20).
+       Cystic fibrosis was tested at every covariate step and was NOT
+       significant on any parameter - the paper's central finding - so
+       there is no CF term to implement.
+       ================================================================= */
+    {
+      id: 'tob_hennig2013',
+      drug: 'Tobramycin',
+      label: 'Hennig 2013 \u2014 2-cmt, adults and children, CF and non-CF',
+      source: 'Hennig S, Standing JF, Staatz CE, Thomson AH. ' +
+              'Clin Pharmacokinet 2013;52(4):289-301, Table 2 and Eqs 6-9.',
+      doi: '10.1007/s40262-013-0036-y',
+      ncmt: 2,
+      matrix: 'total plasma',
+      fu: 1.0,
+      renal: 'cg',
+      // Cockcroft-Gault is shown for orientation only: this model does NOT
+      // use CLcr. Renal function enters through the SCRmean/SCR ratio, and
+      // size through fat-free mass. TDMx labels its own column the same way.
+      renalDisplayOnly: true,
+      covariates: ['wt', 'ht', 'age', 'sex', 'scr'],
+      params: function (c) {
+        var ffm = c.ffm > 0 ? c.ffm : 50,
+            sizeCL = Math.pow(ffm / 70, 0.952),
+            sizeV = ffm / 70,
+            female = c.sex === 'F',
+            thCL = female ? 8.1 : 9.4,
+            thV1 = female ? 20.1 : 25.1,
+            thAge = c.age < 18 ? -0.021 : -0.010,
+            fAge = Math.max(0.05, 1 + thAge * (c.age - 18)),
+            // Age/sex-typical reference creatinine, umol/L. Table 1 gives
+            // the adult values; see note on the paediatric case.
+            scrRef = c.age >= 18 ? (female ? 69.5 : 84) : 37.2,
+            scrUm = (c.scrUnit === 'umol/L') ? c.scr : c.scr * 88.4,
+            fScr = Math.pow(scrRef / Math.max(5, scrUm), 0.222);
+        return {
+          CL: thCL * sizeCL * fAge * fScr,
+          V1: thV1 * sizeV,
+          Q: 1.5 * sizeCL,
+          V2: 10.0 * sizeV
+        };
+      },
+      iiv: { CL: 0.259, V1: 0.152, Q: 0.418, V2: 0.585 },
+      iivScale: 'cv',
+      iivCorr: [['CL', 'V1', 0.658]],
+      err: { add: 0, prop: 0.204 },
+      bayesian: true,
+      note: 'Size is FAT-FREE MASS (Janmahasatian 2005), so height is ' +
+            'required as well as weight \u2014 not total body weight, which ' +
+            'the paper found inferior. Clearance also depends on serum ' +
+            'creatinine only through the ratio SCRmean/SCR, where SCRmean ' +
+            'is an age-, sex- and size-typical normal value; the adult ' +
+            'values from Table 1 (69.5 \u00b5mol/L female, 84 \u00b5mol/L ' +
+            'male) are used here, and the paediatric relationship is not ' +
+            'reproduced in the paper, so ages under 18 fall back to the ' +
+            'reported paediatric median of 37.2 \u00b5mol/L and should be ' +
+            'treated as approximate. Cystic fibrosis is deliberately absent ' +
+            'as a covariate: it was tested at every step and never reached ' +
+            'significance, which is the paper\u2019s conclusion. The ' +
+            'published between-occasion variability on clearance (12.7%) ' +
+            'and the estimated infusion-duration parameter are not ' +
+            'implemented.',
+      targets: AG_TARGETS_2,
+      defaultRegimen: { dose: 560, tau: 24, tinf: 0.5 },
+      defaultMic: 1
     }
   ];
 
@@ -664,6 +916,47 @@
   var PENDING = [];
 
   var PRESETS = [
+    /* The once-daily argument: identical daily dose, three intervals.
+       The peak component carries efficacy and only the extended interval
+       reaches it; the trough component is met by all three at normal
+       renal function, so the separation is entirely in the peak. */
+    { id: 'gen-od', label: 'Gentamicin: once-daily vs divided dosing',
+      model: 'gen_xuan2004', target: 'od2',
+      regimens: [
+        { label: '420 mg q24h', dose: 420, tau: 24, tinf: 1 },
+        { label: '210 mg q12h', dose: 210, tau: 12, tinf: 1 },
+        { label: '140 mg q8h', dose: 140, tau: 8, tinf: 1 }
+      ],
+      cov: { wt: 70, age: 55, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' }, mic: 1 },
+
+    /* Renal impairment: the SAME regimen that works at CLcr 90 now fails,
+       and it fails on the trough. Interval extension recovers it; dose
+       reduction does not, because it sacrifices the peak as well. */
+    { id: 'gen-renal', label: 'Gentamicin: adjusting for renal impairment',
+      model: 'gen_xuan2004', target: 'od2',
+      regimens: [
+        { label: '420 mg q24h', dose: 420, tau: 24, tinf: 1 },
+        { label: '420 mg q48h', dose: 420, tau: 48, tinf: 1 },
+        { label: '210 mg q24h', dose: 210, tau: 24, tinf: 1 }
+      ],
+      // SCr 1.5 mg/dL in a 70-year-old gives CLcr ~45 mL/min, the point
+      // where the three-way contrast is cleanest: q24h fails on the
+      // trough alone, interval extension fixes it with the peak
+      // untouched, and halving the dose fixes it less well while also
+      // giving up peak attainment.
+      cov: { wt: 70, age: 70, sex: 'M', scr: 1.5, scrUnit: 'mg/dL' }, mic: 1 },
+
+    /* Amikacin in the ICU, where the covariates are categorical: the same
+       dose in a septic patient has a larger volume and a lower peak. */
+    { id: 'amk-icu', label: 'Amikacin: effect of sepsis on the peak',
+      model: 'amk_romano1998', target: 'od5',
+      regimens: [
+        { label: '1 g q24h', dose: 1000, tau: 24, tinf: 0.5 },
+        { label: '1.5 g q24h', dose: 1500, tau: 24, tinf: 0.5 }
+      ],
+      cov: { wt: 70, age: 55, sex: 'M', ht: 175, scr: 1.0, scrUnit: 'mg/dL',
+             sepsis: true }, mic: 4 },
+
     { id: 'pip-ei', label: 'Piperacillin: standard vs extended infusion',
       model: 'pip_kim2022', target: 'ft100',
       regimens: [

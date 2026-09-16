@@ -267,5 +267,26 @@ console.log('\n— newly added models —');
   audit(id + ' pta', d.getElementById('cvPta'));
 });
 
+console.log('\n— aminoglycoside modules (peaks are an order of magnitude above beta-lactam troughs) —');
+{
+  const { d } = boot('?preset=gen-od&n=300');
+  audit('gentamicin once-daily, 3 regimens', d.getElementById('cvConc'));
+  audit('gentamicin once-daily PTA', d.getElementById('cvPta'));
+}
+{
+  // Amikacin at MIC 4 puts the MIC line far below a 60 mg/L peak, which
+  // is the widest dynamic range any model in the library produces.
+  const { d } = boot('?preset=amk-icu&logy=1&n=300');
+  audit('amikacin log-y, wide range', d.getElementById('cvConc'));
+}
+{
+  const { d } = boot('?mode=widget&panel=conc&preset=gen-renal&whole=1&n=250', 380);
+  audit('narrow widget, q48h whole course', d.getElementById('cvConc'));
+}
+{
+  const { d } = boot('?model=tob_hennig2013&dose=560&tau=24&tinf=0.5&mic=1&target=od2&n=300');
+  audit('tobramycin single regimen', d.getElementById('cvConc'));
+}
+
 console.log(fails === 0 ? '\nLAYOUT AUDIT PASSED' : `\n${fails} LAYOUT CHECK(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

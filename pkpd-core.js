@@ -101,6 +101,46 @@
            (o.sex === 'F' ? 0.742 : 1);
   }
 
+  // Mosteller body-surface-area estimate, m^2.
+  function bsaMosteller(o) {
+    if (!(o.ht > 0) || !(o.wt > 0)) return NaN;
+    return Math.sqrt((o.ht * o.wt) / 3600);
+  }
+
+  /* Jelliffe 1973 "bedside estimate" of creatinine clearance
+     (Jelliffe RW, Ann Intern Med 1973) — the form Romano 1998 cites as
+     its reference 10, and the one TDMx describes as body-surface-area
+     corrected. The equation itself yields mL/min per 1.73 m^2:
+
+        CLcr = [98 - 0.8 x (age - 20)] / SCr(mg/dL),  x 0.9 if female
+
+     `absolute: true` rescales that to the patient's own BSA, which is
+     what a model expecting mL/min (rather than mL/min/1.73m^2) needs.
+     The distinction is small for an average adult (BSA/1.73 ~ 1.04) but
+     it is a real choice, so it is explicit rather than assumed. */
+  function jelliffe(o) {
+    var scr = scrToMgdl(o.scr, o.scrUnit);
+    if (!(scr > 0)) return NaN;
+    var v = (98 - 0.8 * Math.max(0, o.age - 20)) / scr;
+    if (o.sex === 'F') v *= 0.9;
+    v = Math.max(1, v);
+    if (o.absolute) {
+      var bsa = bsaMosteller(o);
+      if (bsa > 0) v *= bsa / 1.73;
+    }
+    return v;
+  }
+
+  /* Fat-free mass, Janmahasatian 2005 (Clin Pharmacokinet 44:1051-65) —
+     the reference Hennig 2013 cites for the FFM covariate. Returns kg. */
+  function ffmJanmahasatian(o) {
+    if (!(o.wt > 0) || !(o.ht > 0)) return NaN;
+    var bmi = o.wt / Math.pow(o.ht / 100, 2);
+    return o.sex === 'F'
+      ? (9270 * o.wt) / (8780 + 244 * bmi)
+      : (9270 * o.wt) / (6680 + 216 * bmi);
+  }
+
   function ibwDevine(o) {
     var inch = o.ht / 2.54 - 60;
     return (o.sex === 'F' ? 45.5 : 50) + 2.3 * Math.max(0, inch);
@@ -185,7 +225,8 @@
     for (i = 0; i < n; i++) {
       ev.push({ t0: i * reg.tau, tinf: tinf, rate: reg.dose / tinf });
     }
-    return { events: ev, tau: reg.tau, tEnd: (n - 1) * reg.tau + reg.tau, ci: false };
+    return { events: ev, tau: reg.tau, tinf: tinf,
+             tEnd: (n - 1) * reg.tau + reg.tau, ci: false };
   }
 
   // Number of doses needed to be at (practical) steady state, then a few
@@ -406,8 +447,42 @@
     return out;
   }
 
+  /* ---- Lognormal sampling on a MICRO-constant parameterisation ------
+     Xuan 2004 reports its two-compartment model as CL, V1, K12, K21 with
+     between-subject variability on each of those four — not on Q and V2.
+     Those are not interchangeable: Q = K12 x V1 and V2 = Q / K21, so
+     variability declared on K12/K21 propagates into BOTH Q and V2 and
+     correlates them. Applying the published K12 spread directly to Q (and
+     K21's to V2) would therefore misstate the distribution of the
+     peripheral compartment.
+
+     A model using this path supplies microParams(cov) -> {CL,V1,K12,K21}
+     with `iiv` keyed on those names, plus toMacro() for the conversion
+     the solver needs. Sampling happens on the published scale and is
+     converted afterwards, which is exactly faithful.
+     ------------------------------------------------------------------ */
+  function sampleMicro(model, cov, n, seed) {
+    var cv = iivCov(model), keys = cv.keys, nk = keys.length,
+        L = cholesky(cv.S),
+        typ = model.microParams(cov),
+        z = normals(n * Math.max(1, nk), seed || 12345),
+        out = new Array(n), s, i, j;
+    for (s = 0; s < n; s++) {
+      var drawn = {}, k;
+      for (k in typ) if (Object.prototype.hasOwnProperty.call(typ, k)) drawn[k] = typ[k];
+      for (i = 0; i < nk; i++) {
+        var e = 0;
+        for (j = 0; j <= i; j++) e += L[i][j] * z[s * nk + j];
+        if (drawn[keys[i]] != null) drawn[keys[i]] *= Math.exp(e);
+      }
+      out[s] = model.toMacro(drawn);
+    }
+    return out;
+  }
+
   function samplePopulation(model, cov, n, seed) {
     if (model.sampling === 'mvnorm') return sampleMvn(model, cov, n, seed);
+    if (model.sampling === 'micro') return sampleMicro(model, cov, n, seed);
     var cv = iivCov(model), keys = cv.keys, nk = keys.length,
         L = cholesky(cv.S),
         typ = model.params(cov),
@@ -570,6 +645,18 @@
                        .sort(function (a, b) { return a - b; });
       return { median: percentile(v, 0.5), p5: percentile(v, 0.05), p95: percentile(v, 0.95) };
     }
+
+    /* The clinically sampled aminoglycoside "peak" is drawn about an hour
+       after the infusion ends, not at the end of it — the distribution
+       phase makes those two markedly different (for Hennig's optimal
+       tobramycin dose, 21 vs 33 mg/L). Reporting only Cmax would look
+       like a 50% disagreement with any paper or TDM report quoting a 1-h
+       peak, so both are computed. Continuous infusion has no peak of
+       this kind and is left null. */
+    if (!sched.ci) {
+      var tPk = tA + (sched.tinf || 0) + 1;
+      for (j = 0; j < n; j++) exposures[j].peak1h = perSubj[j].cf(tPk);
+    }
     var ptaRef = 0;
     for (j = 0; j < n; j++) if (meetsTarget(exposures[j], target, refMic)) ptaRef++;
 
@@ -604,7 +691,9 @@
       ptaAtRefMic: (100 * ptaRef) / n,
       exposure: {
         auc24: summ('auc24'), fauc24: summ('fauc24'),
-        cmin: summ('cmin'), cmax: summ('cmax'), tAbove: summ('tAbove')
+        cmin: summ('cmin'), cmax: summ('cmax'), tAbove: summ('tAbove'),
+        // null under continuous infusion, where it has no meaning
+        peak1h: sched.ci ? null : summ('peak1h')
       },
       n: n, micMultiplier: micEff,
       rejectedFraction: subjects.rejectedFraction || 0,
@@ -707,8 +796,15 @@
      doseEvents: explicit event list (see buildSchedule) so a real, possibly
      irregular, dosing record can be used.                                  */
   function mapEstimate(model, cov, doseEvents, samples) {
-    var keys = iivKeys(model),
-        typ = model.params(cov),
+    /* A micro-constant model declares its variability on CL/V1/K12/K21,
+       so the etas must be applied on that scale and converted afterwards
+       — otherwise withEtas() finds no K12/K21 in the macro parameter set,
+       silently drops those etas, and the optimiser explores dimensions
+       that cannot affect the prediction while the prior still penalises
+       them. */
+    var micro = model.sampling === 'micro' && typeof model.microParams === 'function',
+        keys = iivKeys(model),
+        typ = micro ? model.microParams(cov) : model.params(cov),
         omegas = keys.map(function (k) { return omegaOf(model, k); }),
         // The prior penalty is eta' OMEGA^-1 eta. With a diagonal OMEGA
         // that is the familiar sum of (eta/omega)^2; with an off-diagonal
@@ -721,9 +817,14 @@
         prop = (model.err && model.err.prop) || 0,
         sched = { events: doseEvents };
 
+    function applyEtas(etas) {
+      var q = withEtas(model, typ, etas);
+      return micro ? model.toMacro(q) : q;
+    }
+
     function obj(etas) {
-      var p = withEtas(model, typ, etas);
-      if (!(p.CL > 0) || !(p.V1 > 0)) return 1e12;
+      var p = applyEtas(etas);
+      if (!p || !(p.CL > 0) || !(p.V1 > 0)) return 1e12;
       if (model.ncmt === 2 && (!(p.Q > 0) || !(p.V2 > 0))) return 1e12;
       var cf = concFn(p, model.ncmt, sched), ll = 0, i;
       for (i = 0; i < samples.length; i++) {
@@ -748,7 +849,7 @@
     // One restart from the solution guards against an early simplex collapse.
     fit = nelderMead(obj, fit.x, { step: 0.08, maxIter: 800 });
 
-    var ind = withEtas(model, typ, fit.x),
+    var ind = applyEtas(fit.x),
         cf = concFn(ind, model.ncmt, sched);
     return {
       etas: fit.x, objective: fit.fx,
@@ -785,7 +886,10 @@
   var API = {
     rng: rng, normals: normals,
     cockcroftGault: cockcroftGault, ckdEpiCr: ckdEpiCr, ckdEpiCysC: ckdEpiCysC,
-    mdrd: mdrd, ibwDevine: ibwDevine, scrToMgdl: scrToMgdl,
+    mdrd: mdrd, jelliffe: jelliffe, bsaMosteller: bsaMosteller,
+    ffmJanmahasatian: ffmJanmahasatian,
+    ibwDevine: ibwDevine, scrToMgdl: scrToMgdl,
+    sampleMicro: sampleMicro,
     iivCov: iivCov, cholesky: cholesky, mahalanobis2: mahalanobis2,
     sampleMvn: sampleMvn,
     micro2: micro2, infusionResponse: infusionResponse,

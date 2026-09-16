@@ -433,5 +433,187 @@ const ptaOf = (model, cov, regimen, tid, mic, extra) => PKPD.simulate(Object.ass
      ptaOf(mNi, { wt: 84, age: 57, sex: 'M', crcl: 100 }, { dose: 2000, tau: 8, tinf: 0.5 }, 'ft50', 8));
 }
 
+/* ===================================================================
+   AMINOGLYCOSIDES — Xuan 2004 / Romano 1998 / Hennig 2013
+   =================================================================== */
+console.log('\n\n' + '='.repeat(70));
+console.log('Aminoglycosides: reproduction of published quantities');
+console.log('='.repeat(70));
+
+// validate.cjs has no relerr of its own; test-core.cjs does.
+const relerr = (a, b) => Math.abs(a - b) / Math.max(1e-12, Math.abs(b));
+
+const mXu = MODELS.find(m => m.id === 'gen_xuan2004');
+const mRo = MODELS.find(m => m.id === 'amk_romano1998');
+const mHe = MODELS.find(m => m.id === 'tob_hennig2013');
+
+{
+  /* ---- Xuan 2004 (gentamicin) ----
+     Paper: "The mean population estimate of CL was 4.32 l/h and V1 was
+     19.6 l" at the cohort means (CLcr 92 mL/min, weight 70.2 kg), and
+     "for the this study population which received 7 mg/kg of gentamicin,
+     the peak concentration was approximately 22 mg/l". */
+  const p = mXu.params({ crcl: 92, wt: 70 });
+  ok('Xuan: typical CL reproduces the published 4.32 L/h',
+     relerr(p.CL, 4.32) < 0.01, `${p.CL.toFixed(3)} L/h`);
+  ok('Xuan: typical V1 reproduces the published 19.6 L',
+     relerr(p.V1, 19.6) < 0.01, `${p.V1.toFixed(3)} L`);
+  // Micro-constants must round-trip: Q = K12*V1, V2 = Q/K21.
+  const mi = mXu.microParams({ crcl: 92, wt: 70 });
+  ok('Xuan: K12 and K21 recover the published thetas',
+     relerr(mi.K12, 0.092) < 1e-12 && relerr(mi.K21, 0.071) < 1e-12,
+     `K12 ${mi.K12}, K21 ${mi.K21}`);
+  ok('Xuan: macro conversion is self-consistent',
+     relerr(p.Q, mi.K12 * mi.V1) < 1e-12 && relerr(p.V2, p.Q / mi.K21) < 1e-12,
+     `Q ${p.Q.toFixed(3)} L/h, V2 ${p.V2.toFixed(2)} L`);
+
+  const prof = PKPD.profile(mXu, p, { dose: 7 * 70, tau: 24, tinf: 1 }, 600, 24);
+  const peak = Math.max(...prof.conc);
+  ok('Xuan: 7 mg/kg once-daily gives the published peak of about 22 mg/L',
+     Math.abs(peak - 22) < 2.5, `${peak.toFixed(2)} mg/L`);
+
+  // Sampling on the micro scale must reproduce the published CL spread.
+  const subj = PKPD.samplePopulation(mXu, { crcl: 92, wt: 70 }, 40000, 5);
+  const cls = subj.map(s => s.CL);
+  const mean = cls.reduce((a, b) => a + b, 0) / cls.length;
+  const cv = Math.sqrt(cls.reduce((a, b) => a + (b - mean) ** 2, 0) / (cls.length - 1)) / mean;
+  ok('Xuan: sampled CL reproduces the published 29.6% CV',
+     Math.abs(cv - 0.296) < 0.02, `${(cv * 100).toFixed(1)}%`);
+  ok('Xuan: micro sampling yields physically valid subjects',
+     subj.every(s => s.CL > 0 && s.V1 > 0 && s.Q > 0 && s.V2 > 0));
+}
+
+{
+  /* ---- Romano 1998 (amikacin) ----
+     Table III: theta1 0.934 on CLcr (L/h), theta2 0.225 trauma on CL,
+     theta3 0.393 on TBW, theta4 0.246 sepsis on Vd. */
+  const base = { crcl: 80, wt: 69.5, age: 53, sex: 'M' };
+  const p = mRo.params(base);
+  ok('Romano: CL is 0.934 x CLcr expressed in L/h',
+     relerr(p.CL, 0.934 * 80 * 0.06) < 1e-9, `${p.CL.toFixed(3)} L/h at CLcr 80 mL/min`);
+  ok('Romano: V1 is 0.393 L/kg of total body weight',
+     relerr(p.V1 / 69.5, 0.393) < 1e-9, `${(p.V1 / 69.5).toFixed(4)} L/kg`);
+  ok('Romano: trauma raises clearance by the published 22.5%',
+     relerr(mRo.params({ ...base, trauma: true }).CL / p.CL, 1.225) < 1e-9);
+  ok('Romano: sepsis raises the volume by the published 24.6%',
+     relerr(mRo.params({ ...base, sepsis: true }).V1 / p.V1, 1.246) < 1e-9);
+  ok('Romano: trauma does NOT change the volume, nor sepsis the clearance',
+     mRo.params({ ...base, trauma: true }).V1 === p.V1 &&
+     mRo.params({ ...base, sepsis: true }).CL === p.CL);
+  // Physiological sanity: amikacin is cleared by filtration, so CL/GFR ~ 1.
+  ok('Romano: clearance is close to glomerular filtration rate',
+     Math.abs(p.CL / (80 * 0.06) - 1) < 0.1, `CL/CLcr = ${(p.CL / (80 * 0.06)).toFixed(3)}`);
+
+  /* Jelliffe is NOT interchangeable with Cockcroft-Gault in this model,
+     but the reason is body size rather than age — an earlier version of
+     this note claimed the elderly, which the numbers below disprove.
+     Cockcroft-Gault is linear in weight; Jelliffe scales with BSA. */
+  const at = (wt, age) => {
+    const o = { scr: 1.0, scrUnit: 'mg/dL', age: age, sex: 'M', wt: wt, ht: 175 };
+    return PKPD.jelliffe({ ...o, absolute: true }) / PKPD.cockcroftGault(o);
+  };
+  ok('Jelliffe/Cockcroft-Gault ratio falls steeply with body weight',
+     at(45, 60) > 1.05 && at(130, 60) < 0.72,
+     `45 kg ${at(45, 60).toFixed(2)} -> 130 kg ${at(130, 60).toFixed(2)}`);
+  ok('...and is nearly flat with age, so age is NOT the reason they differ',
+     Math.abs(at(70, 25) - at(70, 85)) < 0.05,
+     `age 25 ${at(70, 25).toFixed(2)} vs age 85 ${at(70, 85).toFixed(2)}`);
+  ok('substituting Cockcroft-Gault would overestimate CL in a large patient',
+     mRo.params({ crcl: PKPD.cockcroftGault({ scr: 1.0, scrUnit: 'mg/dL', age: 60, sex: 'M', wt: 130 }), wt: 130 }).CL >
+     1.3 * mRo.params({ crcl: PKPD.jelliffe({ scr: 1.0, scrUnit: 'mg/dL', age: 60, sex: 'M', wt: 130, ht: 175, absolute: true }), wt: 130 }).CL,
+     'by about a third at 130 kg');
+}
+
+{
+  /* ---- Hennig 2013 (tobramycin) ----
+     At FFM = 70 kg, age 18 and SCR = SCRmean every covariate factor is
+     unity, so the parameters must equal the published thetas exactly. */
+  const ref = mHe.params({ sex: 'M', age: 18, scr: 84, scrUnit: 'umol/L', ffm: 70 });
+  ok('Hennig: male CL reproduces theta 9.4 L/h per 70 kg FFM',
+     relerr(ref.CL, 9.4) < 1e-9, `${ref.CL.toFixed(4)}`);
+  ok('Hennig: male V1 reproduces theta 25.1 L per 70 kg FFM',
+     relerr(ref.V1, 25.1) < 1e-9, `${ref.V1.toFixed(4)}`);
+  ok('Hennig: Q reproduces theta 1.5 L/h per 70 kg FFM',
+     relerr(ref.Q, 1.5) < 1e-9, `${ref.Q.toFixed(4)}`);
+  ok('Hennig: V2 reproduces theta 10.0 L per 70 kg FFM',
+     relerr(ref.V2, 10.0) < 1e-9, `${ref.V2.toFixed(4)}`);
+  const refF = mHe.params({ sex: 'F', age: 18, scr: 69.5, scrUnit: 'umol/L', ffm: 70 });
+  ok('Hennig: female thetas reproduce 8.1 L/h and 20.1 L',
+     relerr(refF.CL, 8.1) < 1e-9 && relerr(refF.V1, 20.1) < 1e-9,
+     `CL ${refF.CL.toFixed(3)}, V1 ${refF.V1.toFixed(3)}`);
+  ok('Hennig: clearance falls with age above 18 (theta -0.010/year)',
+     relerr(mHe.params({ sex: 'M', age: 38, scr: 84, scrUnit: 'umol/L', ffm: 70 }).CL,
+            9.4 * (1 - 0.010 * 20)) < 1e-9);
+  ok('Hennig: raised creatinine lowers clearance through the SCRmean ratio',
+     mHe.params({ sex: 'M', age: 40, scr: 168, scrUnit: 'umol/L', ffm: 70 }).CL <
+     mHe.params({ sex: 'M', age: 40, scr: 84, scrUnit: 'umol/L', ffm: 70 }).CL);
+
+  // Janmahasatian FFM, against the equation as published.
+  const ffmM = PKPD.ffmJanmahasatian({ wt: 70, ht: 175, sex: 'M' });
+  const bmiM = 70 / Math.pow(1.75, 2);
+  ok('fat-free mass follows the Janmahasatian male equation',
+     relerr(ffmM, (9270 * 70) / (6680 + 216 * bmiM)) < 1e-12, `${ffmM.toFixed(2)} kg`);
+  ok('fat-free mass is lower in a female of identical size',
+     PKPD.ffmJanmahasatian({ wt: 70, ht: 175, sex: 'F' }) < ffmM);
+
+  /* The paper's own dosing conclusion: "The optimal dose was estimated
+     from the utility function to be 11 mg/kg (total bodyweight) once
+     daily", assessed against "a target peak concentration of 20 mg/L
+     (relating to a 1-h peak/MIC ratios of 20/2) and a target trough
+     concentration of below 1 mg/L". The 1-h peak, not Cmax — the
+     distinction is ~50% at this dose. */
+  const cCF = { sex: 'M', wt: 53.9, ht: 166.5, age: 24, scr: 71, scrUnit: 'umol/L' };
+  const cov = { ...cCF, ffm: PKPD.ffmJanmahasatian(cCF) };
+  const r = PKPD.simulate({
+    model: mHe, cov, regimen: { dose: Math.round(11 * cCF.wt), tau: 24, tinf: 0.5 },
+    target: mHe.targets[0], mics: [1], mic: 1, n: 3000, seed: 7, nGrid: 600
+  });
+  ok('Hennig: 11 mg/kg once-daily gives a 1-h peak near the published 20 mg/L',
+     Math.abs(r.exposure.peak1h.median - 20) < 3,
+     `${r.exposure.peak1h.median.toFixed(2)} mg/L`);
+  ok('Hennig: and a trough below the published 1 mg/L target',
+     r.exposure.cmin.median < 1,
+     `${r.exposure.cmin.median.toFixed(3)} mg/L`);
+  ok('the 1-h peak is materially below the end-of-infusion Cmax',
+     r.exposure.peak1h.median < 0.75 * r.exposure.cmax.median,
+     `1-h peak ${r.exposure.peak1h.median.toFixed(1)} vs Cmax ` +
+     `${r.exposure.cmax.median.toFixed(1)} mg/L`);
+}
+
+{
+  /* ---- The two teaching claims, on the real gentamicin model ---- */
+  const cov = { crcl: 90, wt: 70, age: 55, sex: 'M' };
+  const both = mXu.targets[0];               // Cmax/MIC >= 10 and Cmin <= 2
+  const sim = (regimen, crcl) => PKPD.simulate({
+    model: mXu, cov: { ...cov, crcl }, regimen, target: both,
+    mics: [1], mic: 1, n: 3000, seed: 19, nGrid: 600
+  });
+  const od = sim({ dose: 420, tau: 24, tinf: 1 }, 90);
+  const tid = sim({ dose: 140, tau: 8, tinf: 1 }, 90);
+  ok('Xuan: once-daily beats thrice-daily on the joint target at equal daily dose',
+     od.ptaAtRefMic > tid.ptaAtRefMic,
+     `q24h ${od.ptaAtRefMic.toFixed(1)}% vs q8h ${tid.ptaAtRefMic.toFixed(1)}%`);
+  const comp = (r, type) => r.components.find(c => c.type === type).pta;
+  ok('Xuan: thrice-daily fails specifically on the PEAK component',
+     comp(tid, 'cmaxmic') < comp(od, 'cmaxmic'),
+     `peak q8h ${comp(tid, 'cmaxmic').toFixed(1)}% vs q24h ${comp(od, 'cmaxmic').toFixed(1)}%`);
+
+  const impaired = sim({ dose: 420, tau: 24, tinf: 1 }, 25);
+  ok('Xuan: renal impairment degrades the TROUGH component, not the peak',
+     comp(impaired, 'cminceil') < comp(od, 'cminceil') &&
+     comp(impaired, 'cmaxmic') >= comp(od, 'cmaxmic') - 1e-9,
+     `trough ${comp(od, 'cminceil').toFixed(1)}% -> ${comp(impaired, 'cminceil').toFixed(1)}%, ` +
+     `peak ${comp(od, 'cmaxmic').toFixed(1)}% -> ${comp(impaired, 'cmaxmic').toFixed(1)}%`);
+  const extended = sim({ dose: 420, tau: 48, tinf: 1 }, 25);
+  ok('Xuan: extending the interval recovers the trough at CLcr 25',
+     comp(extended, 'cminceil') > comp(impaired, 'cminceil'),
+     `q24h ${comp(impaired, 'cminceil').toFixed(1)}% -> q48h ${comp(extended, 'cminceil').toFixed(1)}%`);
+  ok('Xuan: and halving the dose instead does NOT recover it as well',
+     comp(sim({ dose: 210, tau: 24, tinf: 1 }, 25), 'cminceil') <
+     comp(extended, 'cminceil'),
+     `half-dose q24h ${comp(sim({ dose: 210, tau: 24, tinf: 1 }, 25), 'cminceil').toFixed(1)}%` +
+     ` vs full-dose q48h ${comp(extended, 'cminceil').toFixed(1)}%`);
+}
+
 console.log(fails === 0 ? '\nVALIDATION PASSED' : `\n${fails} VALIDATION CHECK(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

@@ -18,7 +18,7 @@ file that embeds live in Quarto/reveal.js teaching slides.
 | Deliverable | `mipd-lab.html` — one self-contained file, 133 KB, no CDN, no server, no network requests (the only external URLs are the clickable DOI citation links) |
 | Models implemented | 6 (3 drugs) |
 | Models documented but not implemented | 4, each with the reason shown in-app |
-| Test checks passing | **342** across 5 suites |
+| Test checks passing | **462** across 6 suites |
 | Slide deck | `slides-demo.qmd`, renders under Quarto 1.6.43 |
 
 ### Architecture
@@ -47,7 +47,7 @@ Rebuild after editing any JS: `python build.py`.
 All four previously-disclosed omissions were implemented once the PDFs
 were supplied — Li 2006 and Ehmann 2019 (meropenem), Klastrup 2020
 (piperacillin continuous infusion) and Nicasio 2009 (cefepime). The
-library is now **10 models across 4 drugs**, and `PENDING` is empty for
+library is now **13 models across 7 drugs**, and `PENDING` is empty for
 the first time. The app states that explicitly rather than rendering a
 blank panel.
 
@@ -126,6 +126,9 @@ forecasting at all, so a partial model is not a cheap version of a real one.
 | Meropenem | Gijsen 2021 | 2-cmt, **unbound** | eGFR (CKD-EPI creatinine)<sup>1.29</sup> | yes |
 | Meropenem | Shekar 2014 | 2-cmt, total | CLcr **or** fixed 5.1 L/h on RRT | yes |
 | Meropenem | O'Jeanson 2021 | **1-cmt**, total | dialysis modality / GFR (MDRD) / residual diuresis | yes |
+| Gentamicin | Xuan 2004 | 2-cmt as CL/V<sub>1</sub>/K<sub>12</sub>/K<sub>21</sub> | CLcr (Cockcroft-Gault) on CL; 0.28 L/kg on V<sub>1</sub> | yes |
+| Amikacin | Romano 1998 | **1-cmt** | CLcr (**Jelliffe 1973**); trauma on CL, sepsis on V | no |
+| Tobramycin | Hennig 2013 | 2-cmt | **fat-free mass**, age, SCR ratio, sex; CL-V<sub>1</sub> corr 0.658 | yes |
 | Meropenem | Li 2006 | 2-cmt, total (f<sub>u</sub> 0.98) | CLcr **and age** on CL; weight on V<sub>1</sub> | yes |
 | Meropenem | Ehmann 2019 | 2-cmt, total (f<sub>u</sub> 0.98) | CLcr piecewise-linear to 154 mL/min; weight on V<sub>1</sub>; **albumin on V<sub>2</sub>** | yes |
 | Piperacillin | Klastrup 2020 | **1-cmt**, unbound | CL = 2.25 + 0.119 × CRCL | yes |

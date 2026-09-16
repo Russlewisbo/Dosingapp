@@ -66,8 +66,11 @@ function boot(search) {
   const { w, d, errors } = boot('');
   ok('full mode: no script errors', errors.length === 0, errors.slice(0, 2).join(' | '));
   ok('full mode: PKPD engine exposed', typeof w.PKPD === 'object');
+  // Derived from the library rather than hardcoded, so adding a model
+  // cannot make this assertion stale (it has twice).
   ok('full mode: model library loaded',
-     w.PKPD_MODELS.MODELS.length === 10,
+     w.PKPD_MODELS.MODELS.length === require('./models.js').MODELS.length &&
+     w.PKPD_MODELS.MODELS.length > 0,
      `${w.PKPD_MODELS.MODELS.length} models`);
   const summary = d.getElementById('summary').textContent;
   ok('full mode: summary rendered with a PTA value', /%/.test(summary) && summary.length > 40);
@@ -288,9 +291,16 @@ function boot(search) {
   ok('every model cites a specific table or figure in its source',
      M.every(m => /Table|Fig|equation/i.test(m.source)),
      M.filter(m => !/Table|Fig|equation/i.test(m.source)).map(m => m.id).join(',') || 'all cite');
-  ok('four drugs are represented',
-     new Set(M.map(m => m.drug)).size === 4,
-     Array.from(new Set(M.map(m => m.drug))).join(', '));
+  // Every drug must be reachable from the drug selector, and every model
+  // from its drug — the property that matters, rather than a fixed count.
+  const drugList = Array.from(new Set(M.map(m => m.drug)));
+  ok('more than one drug class is represented', drugList.length >= 4, drugList.join(', '));
+  ok('every aminoglycoside model offers a peak and a trough-ceiling target',
+     M.filter(m => ['Gentamicin', 'Amikacin', 'Tobramycin'].indexOf(m.drug) >= 0)
+      .every(m => m.targets.some(t => t.type === 'cmaxmic' || (t.all || []).some(x => x.type === 'cmaxmic')) &&
+                  m.targets.some(t => t.type === 'cminceil' || (t.all || []).some(x => x.type === 'cminceil'))),
+     M.filter(m => ['Gentamicin', 'Amikacin', 'Tobramycin'].indexOf(m.drug) >= 0)
+      .map(m => m.id + ':' + m.targets.length).join(' '));
 }
 {
   // A meropenem target ladder is available and RRT lowers attainment.
@@ -617,6 +627,132 @@ function boot(search) {
     ok(id + ': the panel says it is unavailable',
        /unavailable for this model/.test(d.getElementById('bayesState').textContent));
   });
+}
+
+/* ---- Aminoglycoside modules: covariate forms, presets, peak column ---- */
+{
+  const M = require('./models.js').MODELS;
+
+  // Romano's categorical ICU covariates must be OFFERED, and only by it.
+  {
+    const { d } = boot('?model=amk_romano1998&n=200');
+    ok('Romano exposes the trauma and sepsis inputs',
+       !d.getElementById('traumaBlock').classList.contains('hidden') &&
+       !d.getElementById('sepsisBlock').classList.contains('hidden'));
+    ok('Romano shows the Jelliffe renal label, not Cockcroft-Gault',
+       /Jelliffe/.test(d.getElementById('renalOut').textContent),
+       d.getElementById('renalOut').textContent.trim().slice(0, 48));
+    const eff = d.getElementById('covEffects').textContent;
+    ok('trauma is annotated as acting on clearance and sepsis on volume',
+       /Trauma\s*→\s*CL/.test(eff) && /Sepsis\s*→\s*V/.test(eff), eff.slice(0, 190));
+  }
+  {
+    const { d } = boot('?model=gen_xuan2004&n=200');
+    ok('the gentamicin model hides trauma and sepsis',
+       d.getElementById('traumaBlock').classList.contains('hidden') &&
+       d.getElementById('sepsisBlock').classList.contains('hidden'));
+  }
+
+  // Hennig: height is load-bearing (fat-free mass), and the displayed
+  // creatinine clearance must be marked as not driving the model.
+  {
+    const { d } = boot('?model=tob_hennig2013&n=200');
+    const ro = d.getElementById('renalOut').textContent;
+    ok('Hennig reports the derived fat-free mass', /Fat-free mass/.test(ro), ro.slice(0, 120));
+    ok('Hennig marks its creatinine clearance as orientation only',
+       /orientation only/.test(ro));
+    const eff = d.getElementById('covEffects').textContent;
+    ok('height is detected as acting on every parameter via fat-free mass',
+       /Height\s*→\s*CL/.test(eff), eff.slice(0, 190));
+    // REGRESSION: the annotation used to claim renal function was
+    // "computed with Cockcroft-Gault", contradicting the display-only
+    // note immediately below it.
+    ok('the annotation does not claim Cockcroft-Gault drives this model',
+       /does not take a creatinine clearance as input/.test(eff) &&
+       !/Renal function is computed with/.test(eff), eff.slice(-170));
+  }
+
+  // The clinical 1-h peak column.
+  {
+    const { d } = boot('?model=gen_xuan2004&dose=420&tau=24&tinf=1&mic=1&n=400');
+    const tbl = d.getElementById('summary').textContent;
+    ok('the summary carries a 1-h peak column', /1-h peak/.test(tbl));
+    ok('and explains that it differs from the end-of-infusion Cmax',
+       /one hour after the end of the infusion/.test(tbl));
+  }
+
+  // Composite targets must report their components.
+  {
+    const { d } = boot('?model=gen_xuan2004&target=od2&dose=420&tau=24&tinf=1&mic=1&n=600');
+    const tbl = d.getElementById('summary').textContent;
+    ok('a joint target reports each component separately',
+       /Joint target, by component/.test(tbl) && /both together/.test(tbl));
+  }
+
+  // ?preset= must actually load every preset in the library.
+  M.length && require('./models.js').PRESETS.forEach(p => {
+    const { d, errors } = boot('?preset=' + p.id + '&n=200');
+    ok(`preset ${p.id} loads its model without error`,
+       d.getElementById('model').value === p.model && errors.length === 0,
+       `${d.getElementById('model').value}${errors.length ? ' | ' + errors[0] : ''}`);
+  });
+
+  // A preset is a starting point: explicit parameters still win.
+  {
+    const { d } = boot('?preset=gen-od&mic=4&n=200');
+    ok('an explicit URL parameter overrides the preset value',
+       /at MIC 4/.test(d.getElementById('summary').textContent));
+  }
+
+  // The teaching claim, asserted through the UI rather than the engine:
+  // divided dosing must fail on the PEAK component.
+  {
+    const { d } = boot('?preset=gen-od&n=2000');
+    const txt = d.getElementById('summary').textContent.replace(/\s+/g, ' ');
+    const blocks = txt.match(/(\d+) mg q(\d+)h[^—]*— [^%]*?([\d.]+)%, [^%]*?([\d.]+)%/g) || [];
+    ok('the once-daily preset compares three regimens', blocks.length === 3,
+       `${blocks.length} regimen blocks`);
+    const peaks = [...txt.matchAll(/MIC ≥ 10: ([\d.]+)%/g)].map(m => parseFloat(m[1]));
+    ok('peak attainment falls as the dosing interval shortens',
+       peaks.length === 3 && peaks[0] > peaks[1] && peaks[1] > peaks[2],
+       peaks.join(' > '));
+  }
+}
+
+/* ---- Documentation consistency.
+   Added because a previous edit left README.md claiming four models were
+   unimplemented in a section directly above a paragraph saying they had
+   been added. Document-wide claims go stale silently; these assert them
+   against the code rather than against a reader's memory. ---- */
+{
+  const fs = require('fs');
+  const MM = require('./models.js');
+  const docs = fs.readFileSync('README.md', 'utf8') + fs.readFileSync('STATUS.md', 'utf8');
+  // "Udy 2015", "Romano 1998" — first two words of the label.
+  const cite = m => m.label.split(' ').slice(0, 2).join(' ');
+
+  ok('every model in the library appears in the documentation',
+     MM.MODELS.every(m => docs.includes(cite(m))),
+     MM.MODELS.filter(m => !docs.includes(cite(m))).map(m => m.id).join(',') || 'all present');
+  ok('every preset appears in the documentation',
+     MM.PRESETS.every(p => docs.includes(p.id)),
+     MM.PRESETS.filter(p => !docs.includes(p.id)).map(p => p.id).join(',') || 'all present');
+  ok('every model with forecasting disabled is documented as such',
+     MM.MODELS.filter(m => !m.bayesian)
+       .every(m => new RegExp(cite(m) + '\\s*\u2014 Bayesian forecasting only').test(docs)),
+     MM.MODELS.filter(m => !m.bayesian)
+       .filter(m => !new RegExp(cite(m) + '\\s*\u2014 Bayesian forecasting only').test(docs))
+       .map(m => m.id).join(',') || 'all documented');
+  ok('every model with forecasting disabled states a reason in the app',
+     MM.MODELS.filter(m => !m.bayesian).every(m => (m.bayesianNote || '').length > 80),
+     MM.MODELS.filter(m => !m.bayesian).map(m => m.id + ':' + (m.bayesianNote || '').length).join(' '));
+  ok('no stale model or drug count survives in the documentation',
+     !/\b10 models\b/.test(docs) && !/\bfour drugs\b/.test(docs),
+     (docs.match(/\b\d+ models across \d+ drugs\b/) || ['none'])[0]);
+  ok('the documented model and drug counts match the library',
+     docs.includes(`${MM.MODELS.length} models across ` +
+                   `${new Set(MM.MODELS.map(m => m.drug)).size} drugs`),
+     `${MM.MODELS.length} models / ${new Set(MM.MODELS.map(m => m.drug)).size} drugs`);
 }
 
 console.log(fails === 0 ? '\nALL APP TESTS PASSED' : `\n${fails} APP TEST(S) FAILED`);

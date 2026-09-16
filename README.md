@@ -51,6 +51,9 @@ variance terms cannot support Monte Carlo PTA or Bayesian forecasting.
 | Meropenem | **Gijsen 2021** ([10.3390/microorganisms9061310](https://doi.org/10.3390/microorganisms9061310)) | 2-cmt, **unbound** plasma | eGFR (CKD-EPI creatinine)<sup>1.29</sup>, allometric weight | ICU ± ECMO. Carries a published CL–V<sub>c</sub> IIV **correlation** (0.704), sampled jointly |
 | Meropenem | **Shekar 2014** ([10.1186/s13054-014-0565-2](https://doi.org/10.1186/s13054-014-0565-2)) | 2-cmt, total plasma | CLcr (Cockcroft-Gault) **or** RRT status | RRT decouples clearance from CLcr. **Source has an internal inconsistency — see below** |
 | Meropenem | **O'Jeanson 2021** ([10.1007/s13318-021-00709-w](https://doi.org/10.1007/s13318-021-00709-w)) | 1-cmt, total plasma | GFR (**MDRD**), dialysis modality, residual diuresis | Spans no RRT, continuous and semi-continuous (intermittent) dialysis |
+| Gentamicin | **Xuan 2004** ([10.1016/j.ijantimicag.2003.07.010](https://doi.org/10.1016/j.ijantimicag.2003.07.010)) | 2-cmt as **CL, V<sub>1</sub>, K<sub>12</sub>, K<sub>21</sub>** | CLcr (Cockcroft-Gault, TBW) on CL; 0.28 L/kg on V<sub>1</sub> | 939 adults, built entirely on **once-daily** dosing. Variability is published on the micro-constants and sampled there — see below |
+| Amikacin | **Romano 1998** ([10.2165/00044011-199815050-00008](https://doi.org/10.2165/00044011-199815050-00008)) | **1-cmt** | CLcr (**Jelliffe 1973**); **trauma** +22.5% on CL, **sepsis** +24.6% on V | Medical ICU. Bayesian forecasting disabled — see below |
+| Tobramycin | **Hennig 2013** ([10.1007/s40262-013-0036-y](https://doi.org/10.1007/s40262-013-0036-y)) | 2-cmt | **fat-free mass** (Janmahasatian), age, SCR<sub>mean</sub>/SCR ratio, sex | 732 patients with and without CF. Carries a published CL–V<sub>1</sub> IIV **correlation** (0.658). **CF is deliberately absent** — see below |
 
 Meropenem targets are 40% / 50% / 100% fT>MIC and 100% fT>4×MIC. Neither
 ECMO model carries an ECMO term: both Gijsen and Shekar tested ECMO as a
@@ -80,6 +83,12 @@ Two narrower gaps remain, both surfaced in the app rather than silent:
   log-normal Ω the MAP implementation assumes, and no residual error model
   is published. PTA uses the covariance matrix directly, which is how the
   paper simulated.
+- **Romano 1998 — Bayesian forecasting only.** The text selects an 
+  *additive* residual error model while Table III reports the residual as 
+  CV<sub>σ</sub> = 22.0%, a proportional quantity, so the scale of the 
+  residual term is ambiguous in the published record. Monte Carlo target 
+  attainment is unaffected — it uses only the fixed effects and the 
+  interindividual terms.
 
 One model is implemented with a stated gap: **Ehmann 2019's covariate
 equations live in an appendix that is not part of the article PDF.** The
@@ -227,6 +236,9 @@ patient, regimens, target, MIC and seed.
 | `evaldose` | which dose interval the target is evaluated over (default: last) |
 | `whole` | `1` to plot the whole course instead of one interval |
 | `bayes` | `0` to switch Bayesian forecasting off (default on) |
+| `preset` | load a named teaching scenario (model, target, regimens, covariates, MIC) in one parameter; explicit parameters still override it |
+| `trauma` | `1` for trauma (Romano model — raises clearance) |
+| `sepsis` | `1` for sepsis (Romano model — raises volume) |
 | `ecmo` | `1` for ECMO (Kim model) |
 | `rrt` | `1` for continuous RRT (Shekar model) |
 | `dialysis` | `none`, `cont`, `semicont` (O'Jeanson model) |
@@ -404,7 +416,8 @@ is carried in the embed URL as `bayes=0`, which is the useful part for
 teaching: put the population-only and forecast-added versions of the same
 patient on consecutive slides.
 
-For models where forecasting is unavailable — Udy 2015 and Nicasio 2009,
+For models where forecasting is unavailable — Udy 2015, Nicasio 2009 and
+Romano 1998,
 each for a documented reason — the switch is disabled and labelled
 *unavailable for this model* rather than silently doing nothing.
 
@@ -439,6 +452,96 @@ The header and the course note state which interval was evaluated and
 whether it is genuinely at steady state — a course too short to have
 reached it is labelled *pre–steady state* rather than silently reported as
 steady state.
+
+## Aminoglycosides: a different kind of target
+
+Every other drug in the library is scored on time above MIC or on AUC.
+Aminoglycosides are not, so the engine gained three target types. The
+thresholds are the defaults documented in TDMx's own module reference
+manuals: **C<sub>max</sub>/MIC ≥ 10**, **AUC<sub>0-24</sub>/MIC ≥ 70**,
+and a trough ceiling of **2 mg/L** for gentamicin and tobramycin,
+**5 mg/L** for amikacin.
+
+- `cmaxmic` — peak-to-MIC ratio, for concentration-dependent killing.
+- `cminceil` — the first target in the library met by a **low** exposure.
+  It therefore moves opposite to every efficacy target, and a regimen can
+  fail it by giving too much or by dosing too often.
+- `composite` — every component met by the **same** simulated patient.
+  A joint probability, not the product of the marginals: the patient who
+  reaches the peak may be the one who breaches the trough.
+
+A composite target reports each component separately, because the joint
+number hides *which* constraint a regimen fails — and that is the teaching
+content. Three worked scenarios ship as presets:
+
+| Preset | What it shows |
+|---|---|
+| `gen-od` | 420 mg/day as q24h, q12h and q8h. Peak attainment 100% → 77% → 10%, trough 82% → 60% → 39%, **AUC unchanged**. The once-daily argument is a profile-shape effect, not a dose-intensity one. |
+| `gen-renal` | The same 420 mg q24h at CLcr ≈ 45. It fails at 19%, and fails on the *trough* with the peak still at 100%. Extending to q48h recovers it to 83% with the peak intact; halving the dose reaches only 54% and gives up peak attainment as well. |
+| `amk-icu` | Amikacin at MIC 4 in a septic patient. 1 g q24h reaches the peak target in 7% of patients, 1.5 g in 75% — the dose-escalation argument, bounded by the 5 mg/L trough ceiling. |
+
+### The clinical peak is not the C<sub>max</sub>
+
+Aminoglycoside "peaks", both in practice and in these papers, are sampled
+about an hour after the infusion ends rather than at the end of it. The
+distribution phase makes those materially different: at Hennig's own
+optimal tobramycin dose of 11 mg/kg, the 1-h peak is **21 mg/L** while the
+end-of-infusion C<sub>max</sub> is **32 mg/L**. Reporting only
+C<sub>max</sub> would look like a 50% disagreement with any paper or TDM
+report. The summary table carries both, and `validate.cjs` checks the 1-h
+peak against Hennig's published target of 20 mg/L.
+
+The `cmaxmic` target itself uses true C<sub>max</sub>, matching how TDMx
+labels its own column. If you are teaching against a sampled peak, read
+the 1-h peak column.
+
+### Jelliffe is not interchangeable with Cockcroft-Gault
+
+Romano's model is driven by the **Jelliffe 1973** bedside estimate (its
+reference 10), and the app labels the renal readout accordingly.
+Substituting Cockcroft-Gault is a model misuse — but not for the reason
+usually given. The two differ by **body size**, not age: Cockcroft-Gault
+is linear in weight while Jelliffe scales with body surface area, so their
+ratio moves from about **1.13 at 45 kg to 0.66 at 130 kg**. Using
+Cockcroft-Gault would overestimate amikacin clearance by roughly a third
+in a large patient. Across age and creatinine the ratio is almost flat
+(0.90 to 0.92). Both halves are asserted in `validate.cjs`.
+
+### Variability on the scale it was published on
+
+Xuan reports between-subject variability on the micro-constants — CL,
+V<sub>1</sub>, K<sub>12</sub>, K<sub>21</sub> — not on Q and V<sub>2</sub>.
+Those are not interchangeable, since Q = K<sub>12</sub>·V<sub>1</sub> and
+V<sub>2</sub> = Q/K<sub>21</sub>, so variability on K<sub>12</sub>
+propagates into *both* macro parameters and correlates them. Declaring
+K<sub>12</sub>'s spread on Q instead would misstate the peripheral
+compartment. The engine samples on the published scale and converts
+afterwards (`sampling: 'micro'`), and MAP estimation does the same; the
+sampled CL spread is checked against the published 29.6% CV.
+
+### What these three models deliberately do not include
+
+- **Cystic fibrosis, in Hennig 2013.** Tested at every covariate step and
+  never significant on any parameter — that is the paper's central
+  finding, so adding a CF term would contradict the source.
+- **Romano's residual error.** The text selects an *additive* residual
+  model while Table III reports the residual as CV<sub>σ</sub> = 22.0%, a
+  proportional quantity. The scale is ambiguous in the published record
+  and a wrong residual variance silently changes how strongly TDM samples
+  outweigh the prior, so MAP forecasting is disabled with that reason
+  shown in the app. Monte Carlo attainment is unaffected: it uses only the
+  fixed effects and the interindividual terms, which is how the paper
+  itself used the model.
+- **Hennig's paediatric SCR<sub>mean</sub>.** The adult reference values
+  are tabulated (69.5 µmol/L female, 84 µmol/L male) but the age
+  relationship for children is not reproduced in the paper, so ages under
+  18 fall back to the reported paediatric median of 37.2 µmol/L and should
+  be treated as approximate.
+- **Hennig's between-occasion variability** (12.7% on clearance) and its
+  estimated infusion-duration parameter.
+- **Xuan's poorly-identified terms**, kept as published but flagged in the
+  model note: IIV on V<sub>1</sub> is 5.8% with a relative standard error
+  of 350%, and K<sub>21</sub> has a 95% CI of 0.0033–0.14.
 
 ## Scope
 

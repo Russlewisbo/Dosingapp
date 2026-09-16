@@ -568,5 +568,30 @@ function rk4Two(p, R0, Tinf, tEnd, h) {
      ` -> q48h ${sim({ dose: 420, tau: 48, tinf: 0.5 }, CEIL, 20, 1).ptaAtRefMic.toFixed(1)}%`);
 }
 
+/* ---- 22. REGRESSION: comparing regimens with DIFFERENT dosing
+   intervals. Each is dosed to its own steady state, so their evaluation
+   windows sit at different absolute times and have different lengths.
+   A plot window taken from the first regimen alone threw the others off
+   the canvas (282 of 458 vertices, at x as low as -448). The engine-side
+   property that makes correct plotting possible is asserted here; the
+   layout audit covers the drawing itself. ---- */
+{
+  const model = MODELS.find(m => m.id === 'gen_xuan2004');
+  const mk = (dose, tau) => PKPD.simulate({
+    model, cov: { crcl: 90, wt: 70, age: 55, sex: 'M' },
+    regimen: { dose, tau, tinf: 1 }, target: model.targets[0],
+    mics: [1], mic: 1, n: 200, seed: 4, nGrid: 200
+  });
+  const a = mk(420, 24), b = mk(140, 8);
+  ok('regimens with different tau report different interval lengths',
+     Math.abs((a.tB - a.tA) - 24) < 1e-6 && Math.abs((b.tB - b.tA) - 8) < 1e-6,
+     `${(a.tB - a.tA).toFixed(1)} h vs ${(b.tB - b.tA).toFixed(1)} h`);
+  ok('each regimen carries its own window start, so it can be aligned',
+     a.tA !== b.tA, `tA ${a.tA} vs ${b.tA}`);
+  ok('every sample time lies inside that regimen\'s own window',
+     b.times.every(x => x >= b.tA - 1e-9 && x <= b.tB + 1e-9),
+     `${b.times[0]}..${b.times[b.times.length - 1]} within ${b.tA}..${b.tB}`);
+}
+
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);
