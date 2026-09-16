@@ -91,6 +91,25 @@ nonparametric model cannot simply be sampled as a normal.
 
 ---
 
+## What does a loading dose buy? {background-iframe="mipd-lab.html?mode=widget&preset=van-load&n=800&panel=conc&title=Vancomycin%201%20g%20q12h%2C%20with%20and%20without%20a%202%20g%20load" background-interactive="true"}
+
+::: {.notes}
+Identical maintenance dosing in both arms. The only difference is a 2 g
+load at t = 0, with maintenance starting 12 h later.
+
+Ask the class to predict what happens to steady-state attainment before
+revealing the table. The answer is nothing: 53.6% vs 53.7%. The plateau
+is set by dose rate and clearance, so a loading dose cannot change it.
+
+What it changes is day 1 — attainment 1.6% to 69.4%, and the fraction of
+patients reaching AUC 400 within 24 h from 1.6% to 73.6%. For vancomycin
+this matters more than it looks, because the 400-600 target is defined on
+AUC(0-24): the day-1 column IS the target, not a proxy for it.
+
+The corollary is worth stating explicitly: a loading dose buys time, never
+exposure. It does not rescue an inadequate maintenance dose.
+:::
+
 ## Why once daily? {background-iframe="mipd-lab.html?mode=widget&preset=gen-od&n=800&title=Gentamicin%20420%20mg%2Fday%2C%20three%20intervals" background-interactive="true"}
 
 ::: {.notes}

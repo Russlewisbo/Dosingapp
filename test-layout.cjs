@@ -329,5 +329,34 @@ console.log('\n\u2014 fitted-period view (population band, MAP individual and sa
   }
 }
 
+console.log('\n\u2014 loading doses (a tall early peak on a whole-course axis) \u2014');
+{
+  {
+    // Two arms of different total course length AND a peak at t=0 that
+    // exceeds anything in the steady-state portion.
+    const { d } = boot('?preset=van-load&n=250');
+    audit('vancomycin load vs none', d.getElementById('cvConc'));
+    audit('vancomycin load vs none, PTA', d.getElementById('cvPta'));
+  }
+  {
+    // CI with a load: the plateau is flat and low while the load spike is
+    // high, the worst case for y-scaling.
+    const { d } = boot('?preset=pip-load-ci&n=200');
+    audit('piperacillin CI with a load', d.getElementById('cvConc'));
+  }
+  {
+    // Log axis: the pre-dose concentration is exactly zero at t = 0.
+    const { d } = boot('?model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12' +
+                       '&tinf=1&load=2000&loadtinf=2&whole=1&logy=1&n=250');
+    audit('loaded course on a log axis', d.getElementById('cvConc'));
+  }
+  {
+    // A very large load in the narrow widget: longest labels, least room.
+    const { d } = boot('?mode=widget&panel=conc&model=van_thomson2009&target=auc400' +
+                       '&mic=1&dose=1000&tau=12&tinf=1&load=3000&loadtinf=3&whole=1&n=200', 380);
+    audit('big load at 380 px', d.getElementById('cvConc'));
+  }
+}
+
 console.log(fails === 0 ? '\nLAYOUT AUDIT PASSED' : `\n${fails} LAYOUT CHECK(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

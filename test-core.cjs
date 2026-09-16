@@ -663,5 +663,162 @@ function rk4Two(p, R0, Tinf, tEnd, h) {
      `low-conc ${lo.params.CL.toFixed(2)} L/h`);
 }
 
+/* ---- 24. Loading doses and the day-1 window. ---- */
+{
+  const m = MODELS.find(x => x.id === 'van_thomson2009');
+  const T = m.targets.find(t => t.id === 'auc400');
+  const cov = { wt: 80, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' };
+  cov.crcl = PKPD.cockcroftGault(cov);
+  const sim = (reg, extra) => PKPD.simulate(Object.assign({
+    model: m, cov, regimen: reg, target: T, mics: [1], mic: 1,
+    n: 1200, seed: 11
+  }, extra || {}));
+
+  // --- schedule construction ---
+  {
+    const plain = PKPD.buildSchedule({ dose: 1000, tau: 12, tinf: 1, nDoses: 3 });
+    const load = PKPD.buildSchedule({ dose: 1000, tau: 12, tinf: 1, nDoses: 3,
+                                      loadingDose: 2000, loadingTinf: 2 });
+    ok('a loading dose adds one event and leaves the maintenance count alone',
+       load.events.length === plain.events.length + 1,
+       `${plain.events.length} -> ${load.events.length}`);
+    ok('the load is given at t = 0 over its own infusion time',
+       load.events[0].t0 === 0 && Math.abs(load.events[0].tinf - 2) < 1e-12 &&
+       Math.abs(load.events[0].rate - 1000) < 1e-9,
+       `t0 ${load.events[0].t0}, tinf ${load.events[0].tinf}, rate ${load.events[0].rate}`);
+    ok('maintenance starts one interval AFTER the load, not alongside it',
+       load.t0Maint === 12 && load.events[1].t0 === 12,
+       `t0Maint ${load.t0Maint}, first maintenance at ${load.events[1].t0} h`);
+    ok('the loading infusion defaults to the maintenance infusion time',
+       Math.abs(PKPD.buildSchedule({ dose: 1000, tau: 12, tinf: 1.5, nDoses: 2,
+         loadingDose: 2000 }).events[0].tinf - 1.5) < 1e-12);
+    // Total dose delivered in the first 24 h must actually be higher.
+    const mg24 = (sc) => sc.events
+      .filter(e => e.t0 < 24)
+      .reduce((a, e) => a + e.rate * Math.min(e.tinf, 24 - e.t0), 0);
+    ok('the load raises the dose delivered in the first 24 h',
+       mg24(load) > mg24(plain),
+       `${mg24(plain)} mg -> ${mg24(load)} mg`);
+  }
+
+  // --- the invariance that IS the teaching point ---
+  {
+    const a = sim({ dose: 1000, tau: 12, tinf: 1 });
+    const b = sim({ dose: 1000, tau: 12, tinf: 1, loadingDose: 2000, loadingTinf: 2 });
+    const rel = Math.abs(b.ptaAtRefMic - a.ptaAtRefMic) / Math.max(1, a.ptaAtRefMic);
+    ok('a loading dose leaves STEADY-STATE attainment essentially unchanged',
+       rel < 0.05,
+       `${a.ptaAtRefMic.toFixed(1)}% -> ${b.ptaAtRefMic.toFixed(1)}%`);
+    ok('a loading dose transforms DAY-1 attainment',
+       b.day1.pta > 8 * Math.max(a.day1.pta, 1e-9) && b.day1.pta > 40,
+       `${a.day1.pta.toFixed(1)}% -> ${b.day1.pta.toFixed(1)}%`);
+    ok('day-1 AUC rises with the load',
+       b.day1.auc24.median > a.day1.auc24.median * 1.3,
+       `${a.day1.auc24.median.toFixed(0)} -> ${b.day1.auc24.median.toFixed(0)} mg·h/L`);
+    ok('time to target shortens with the load',
+       b.day1.timeToTarget.median < a.day1.timeToTarget.median,
+       `${a.day1.timeToTarget.median.toFixed(1)} h -> ${b.day1.timeToTarget.median.toFixed(1)} h`);
+    ok('far more patients reach the target inside 24 h with the load',
+       b.day1.timeToTarget.fractionReached > 10 * a.day1.timeToTarget.fractionReached,
+       `${a.day1.timeToTarget.fractionReached.toFixed(1)}% -> ` +
+       `${b.day1.timeToTarget.fractionReached.toFixed(1)}%`);
+    ok('the loaded flag is reported',
+       b.loaded === true && a.loaded === false);
+  }
+
+  // --- day 1 is [0,24], NOT the first dosing interval ---
+  {
+    // q6h: interval 1 is 6 h, so scoring it would see a quarter of the day.
+    const pip = MODELS.find(x => x.id === 'pip_kim2022');
+    const pipT = pip.targets.find(t => t.type === 'ftmic');
+    const cov2 = { wt: 80, age: 60, sex: 'M', egfr: 90, ecmo: false };
+    const r = PKPD.simulate({ model: pip, cov: cov2,
+      regimen: { dose: 4000, tau: 6, tinf: 0.5 }, target: pipT,
+      mics: [8], mic: 8, n: 600, seed: 5 });
+    ok('the day-1 schedule covers the whole 24 h even for a short interval',
+       r.day1.nDoses * 6 >= 24, `${r.day1.nDoses} doses x 6 h`);
+    // A course pinned to one dose must NOT shorten the day-1 window.
+    // Same n and seed as `r`: the claim is that the day-1 numbers are
+    // independent of the displayed course length, which only holds
+    // between runs drawing the SAME simulated population.
+    const one = PKPD.simulate({ model: pip, cov: cov2,
+      regimen: { dose: 4000, tau: 6, tinf: 0.5, nDoses: 1 }, target: pipT,
+      mics: [8], mic: 8, n: 600, seed: 5 });
+    ok('pinning nDoses=1 does not shrink the day-1 schedule',
+       one.day1.nDoses >= 4 && one.nDoses === 1,
+       `displayed course ${one.nDoses} dose, day-1 schedule ${one.day1.nDoses}`);
+    ok('day-1 metrics are identical whatever the displayed course length',
+       one.day1.auc24.median > 0 &&
+       Math.abs(one.day1.auc24.median - r.day1.auc24.median) < 1e-6,
+       `1-dose course ${one.day1.auc24.median.toFixed(2)} vs full course ` +
+       `${r.day1.auc24.median.toFixed(2)} mg·h/L`);
+  }
+
+  // --- the %fT>MIC ceiling on a window that starts before the first dose ---
+  {
+    const kl = MODELS.find(x => x.id === 'pip_klastrup2020');
+    const covK = { wt: 80, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' };
+    covK.crcl = PKPD.cockcroftGault(covK);
+    const go = (T2) => PKPD.simulate({ model: kl, cov: covK,
+      regimen: { mode: 'ci', dose24: 16000, duration: 72 }, target: T2,
+      mics: [16], mic: 16, n: 600, seed: 3 });
+    const hundred = go(kl.targets.find(t => t.threshold === 100));
+    const fifty = go({ type: 'ftmic', threshold: 50, label: '50% fT>MIC', id: 'ft50' });
+    ok('100% fT>MIC is flagged unattainable over a window containing the pre-dose period',
+       hundred.day1.ceilingBinds === true && hundred.day1.pta === null,
+       `ceiling ${hundred.day1.ptaCeiling.toFixed(1)}%`);
+    ok('a 50% fT>MIC target is scored normally on day 1',
+       fifty.day1.ceilingBinds === false && fifty.day1.pta > 50,
+       `PTA ${fifty.day1.pta.toFixed(1)}%, ceiling ${fifty.day1.ptaCeiling.toFixed(1)}%`);
+    ok('the ceiling equals 100% minus the fastest subject\'s ramp',
+       Math.abs(hundred.day1.ptaCeiling -
+                100 * (1 - hundred.day1.timeToTarget.p5 / 24)) < 3,
+       `ceiling ${hundred.day1.ptaCeiling.toFixed(2)}%`);
+  }
+
+  // --- continuous infusion: the load changes the approach, not the plateau ---
+  {
+    const kl = MODELS.find(x => x.id === 'pip_klastrup2020');
+    const covK = { wt: 80, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' };
+    covK.crcl = PKPD.cockcroftGault(covK);
+    const T2 = kl.targets.find(t => t.threshold === 100);
+    const base = { model: kl, cov: covK, target: T2, mics: [16], mic: 16,
+                   n: 600, seed: 3 };
+    const noLoad = PKPD.simulate(Object.assign({}, base,
+      { regimen: { mode: 'ci', dose24: 16000, duration: 72 } }));
+    const withLoad = PKPD.simulate(Object.assign({}, base,
+      { regimen: { mode: 'ci', dose24: 16000, duration: 72, loadingDose: 4000 } }));
+    // exposure has no cavg; AUC over the evaluated window (the final 24 h
+    // of the infusion) is the plateau measure that is summarised.
+    ok('a CI loading dose does not move the steady-state plateau',
+       Math.abs(withLoad.exposure.auc24.median - noLoad.exposure.auc24.median) /
+         noLoad.exposure.auc24.median < 0.02,
+       `AUC over the final 24 h ${noLoad.exposure.auc24.median.toFixed(0)} -> ` +
+       `${withLoad.exposure.auc24.median.toFixed(0)} mg·h/L`);
+    ok('a CI loading dose sharply shortens time to target',
+       withLoad.day1.timeToTarget.median < 0.4 * noLoad.day1.timeToTarget.median,
+       `${noLoad.day1.timeToTarget.median.toFixed(2)} h -> ` +
+       `${withLoad.day1.timeToTarget.median.toFixed(2)} h`);
+    ok('whole-course plotting now applies to continuous infusion',
+       PKPD.simulate(Object.assign({}, base, { plotWhole: true,
+         regimen: { mode: 'ci', dose24: 16000, duration: 72 } })).tPlotA === 0,
+       'so a CI loading dose is visible at all');
+  }
+
+  // --- time-to-target bookkeeping ---
+  {
+    // A dose far too small to ever reach the AUC target: percentiles must
+    // be null and the reached fraction zero, not a silent 24 h.
+    const tiny = sim({ dose: 50, tau: 12, tinf: 1 });
+    ok('patients never reaching the target are excluded from the percentiles',
+       tiny.day1.timeToTarget.median === null &&
+       tiny.day1.timeToTarget.fractionReached === 0,
+       `median ${tiny.day1.timeToTarget.median}, reached ` +
+       `${tiny.day1.timeToTarget.fractionReached}%`);
+    ok('a trough-ceiling target has no time-to-target',
+       PKPD.timeToTarget(() => 5, { type: 'cminceil', hi: 2 }, 2, 1, 24) === null);
+  }
+}
+
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

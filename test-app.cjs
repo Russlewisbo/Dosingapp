@@ -928,5 +928,102 @@ function boot(search) {
   }
 }
 
+/* ---- Loading doses and the first-24-hours panel ---- */
+{
+  const cells = (d) => [...d.querySelectorAll('#day1 tbody tr')]
+    .map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.replace(/\s+/g, ' ').trim()));
+
+  {
+    const { d } = boot('?preset=van-load&n=600');
+    const rows = cells(d);
+    ok('the loading-dose preset loads two arms into the day-1 table',
+       rows.length === 2, `${rows.length} rows`);
+    ok('the loaded arm is identified in its own label',
+       /load →/.test(rows[0][0]) && !/load →/.test(rows[1][0]),
+       rows.map(r => r[0]).join(' / '));
+    // The headline contrast: time to target and day-1 PTA move, steady
+    // state does not.
+    const tt = rows.map(r => parseFloat(r[1]));
+    const d1 = rows.map(r => parseFloat(r[5]));
+    const ss = rows.map(r => parseFloat(r[6]));
+    ok('the loaded arm reaches the target sooner', tt[0] < tt[1],
+       `${rows[0][1]} vs ${rows[1][1]}`);
+    ok('the loaded arm has far higher day-1 attainment', d1[0] > 8 * Math.max(d1[1], 0.1),
+       `${rows[0][5]} vs ${rows[1][5]}`);
+    ok('steady-state attainment is essentially unchanged by the load',
+       Math.abs(ss[0] - ss[1]) / Math.max(ss[1], 1) < 0.06,
+       `${rows[0][6]} vs ${rows[1][6]}`);
+    ok('the panel says the plateau is unaffected when an arm is loaded',
+       /changes\s+how fast exposure is reached, not the plateau/
+         .test(d.getElementById('day1').textContent));
+    ok('a loading-dose preset turns the whole-course view on',
+       d.getElementById('plotWhole').checked,
+       'otherwise the two arms are identical on screen');
+  }
+
+  {
+    // 100% fT>MIC: day-1 PTA must be withheld with the ceiling explained,
+    // not reported as 0%.
+    const { d } = boot('?preset=pip-load-ci&n=400');
+    const txt = d.getElementById('day1').textContent;
+    ok('day-1 PTA is withheld for a target the window cannot express',
+       /Day-1 PTA is not\s+reported for this target/.test(txt) &&
+       cells(d).every(r => r[5] === '—'),
+       cells(d).map(r => r[5]).join(' / '));
+    ok('the attainable ceiling is stated so the reason is visible',
+       /highest %fT>MIC attainable here is/.test(txt));
+    ok('the CI loading dose still shortens time to target in the table',
+       parseFloat(cells(d)[0][1]) < parseFloat(cells(d)[1][1]),
+       `${cells(d)[0][1]} vs ${cells(d)[1][1]}`);
+  }
+
+  {
+    // The UI field must reach the engine, and clearing it must not
+    // poison the profile with NaN.
+    const b = boot('?model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&n=300');
+    const { w, d } = b;
+    const fld = d.querySelector('input[data-f="loadingDose"]');
+    ok('every regimen offers a loading-dose field', !!fld);
+    const before = parseFloat(cells(d)[0][3]);
+    fld.value = '2000';
+    fld.dispatchEvent(new w.Event('input', { bubbles: true }));
+    const after = parseFloat(cells(d)[0][3]);
+    ok('typing a loading dose raises day-1 AUC', after > before * 1.3,
+       `${before} -> ${after} mg·h/L`);
+    ok('entering a load switches to the whole-course view automatically',
+       d.getElementById('plotWhole').checked);
+    fld.value = '';
+    fld.dispatchEvent(new w.Event('input', { bubbles: true }));
+    const cleared = cells(d)[0];
+    ok('clearing the field removes the load rather than producing NaN',
+       Math.abs(parseFloat(cleared[3]) - before) < 1 && !/NaN/.test(cleared.join(' ')),
+       cleared.join(' | '));
+  }
+
+  {
+    const { d } = boot('?model=van_thomson2009&target=auc400&mic=1&dose=1000&tau=12&tinf=1&load=2000&loadtinf=2&n=300');
+    ok('load and loadtinf are honoured from the URL',
+       /load →/.test(cells(d)[0][0]), cells(d)[0][0]);
+    d.getElementById('mkEmbed').dispatchEvent(new (d.defaultView.Event)('click', { bubbles: true }));
+    const snip = d.getElementById('embedOut').value;
+    ok('the embed URL round-trips the loading dose',
+       /load=2000/.test(snip) && /loadtinf=2/.test(snip), snip.slice(0, 130));
+  }
+
+  {
+    // A trough target cannot be scored on day 1; say so rather than
+    // reporting a meaningless number.
+    const { d } = boot('?model=gen_xuan2004&preset=gen-od&n=300');
+    const txt = d.getElementById('day1').textContent;
+    ok('day-1 PTA is withheld for a composite/trough target with the reason given',
+       /not\s+reported for a trough target/.test(txt) ||
+       /Day-1 PTA is not\s+reported for this target/.test(txt),
+       txt.slice(0, 100).replace(/\s+/g, ' '));
+    ok('time to target is still reported for that target',
+       cells(d).every(r => r[1].length > 0 && !/NaN/.test(r[1])),
+       cells(d).map(r => r[1]).join(' / '));
+  }
+}
+
 console.log(fails === 0 ? '\nALL APP TESTS PASSED' : `\n${fails} APP TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

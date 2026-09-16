@@ -919,6 +919,36 @@
   var PENDING = [];
 
   var PRESETS = [
+    /* The loading-dose argument. Identical maintenance dosing in both
+       arms, so the steady-state column is essentially unchanged while
+       day 1 is transformed — which is precisely the teaching point, and
+       why both numbers are reported side by side. Vancomycin is the
+       canonical case because its target is defined on AUC(0-24), so
+       "day-1 attainment" is not a proxy for the real target, it IS the
+       real target. Whole-course plotting is on: in the single-interval
+       steady-state view the two arms are indistinguishable. */
+    { id: 'van-load', label: 'Vancomycin: loading dose vs none',
+      model: 'van_thomson2009', target: 'auc400',
+      regimens: [
+        { label: 'A', dose: 1000, tau: 12, tinf: 1, loadingDose: 2000, loadingTinf: 2 },
+        { label: 'B', dose: 1000, tau: 12, tinf: 1 }
+      ],
+      cov: { wt: 80, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' },
+      mic: 1, whole: true },
+
+    /* Beta-lactam continuous infusion, where the load does something
+       different: it does not raise the plateau at all, it removes the
+       hours spent climbing to it. Time to target is the number that
+       moves, not day-1 AUC. */
+    { id: 'pip-load-ci', label: 'Piperacillin CI: does it need a loading dose?',
+      model: 'pip_klastrup2020', target: 'ft100',
+      regimens: [
+        { label: 'A', mode: 'ci', dose24: 16000, loadingDose: 4000, loadingTinf: 0.5 },
+        { label: 'B', mode: 'ci', dose24: 16000 }
+      ],
+      cov: { wt: 80, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' },
+      mic: 16, whole: true },
+
     /* The once-daily argument: identical daily dose, three intervals.
        The peak component carries efficacy and only the extended interval
        reaches it; the trough component is met by all three at normal

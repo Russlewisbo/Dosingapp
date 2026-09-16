@@ -235,6 +235,8 @@ patient, regimens, target, MIC and seed.
 | `ndoses` | doses given (default: auto, dosed out to steady state) |
 | `evaldose` | which dose interval the target is evaluated over (default: last) |
 | `whole` | `1` to plot the whole course instead of one interval |
+| `load` | loading dose in mg for regimen A (`load2` for B) |
+| `loadtinf` | loading infusion duration in h (defaults to the maintenance infusion time, or 0.5 h for CI) |
 | `bayes` | `0` to switch Bayesian forecasting off (default on) |
 | `preset` | load a named teaching scenario (model, target, regimens, covariates, MIC) in one parameter; explicit parameters still override it |
 | `trauma` | `1` for trauma (Romano model — raises clearance) |
@@ -549,6 +551,86 @@ sampled CL spread is checked against the published 29.6% CV.
 - **Xuan's poorly-identified terms**, kept as published but flagged in the
   model note: IIV on V<sub>1</sub> is 5.8% with a relative standard error
   of 350%, and K<sub>21</sub> has a 95% CI of 0.0033–0.14.
+
+## Loading doses and the first 24 hours
+
+Steady-state attainment answers *will this regimen work*. It cannot answer
+*when*, and for a drug that takes days to accumulate those are different
+questions with different answers. The second is the one a loading dose
+exists to change.
+
+Every regimen — intermittent or continuous — takes a **loading dose** and
+an optional load infusion time. For intermittent dosing the load is given
+at t = 0 and **maintenance begins one interval later**, which is how
+loading is actually prescribed (25 mg/kg now, then 15 mg/kg q12h starting
+in 12 h); putting the first maintenance dose alongside the load would
+double it rather than replace it.
+
+The **first 24 hours** panel reports, per regimen:
+
+| | |
+|---|---|
+| Time to target | first crossing, median and 5–95th percentile |
+| Reached | fraction of patients getting there inside 24 h |
+| Day-1 AUC | AUC(0–24), mg·h/L |
+| Day-1 %fT>MIC | over the same window |
+| Day-1 PTA | attainment scored on [0, 24 h] |
+| Steady-state PTA | the existing number, for contrast |
+
+Both attainment columns are shown deliberately. In the vancomycin preset
+(`?preset=van-load`, 1 g q12h with and without a 2 g load):
+
+| | Time to AUC 400 | Reached | Day-1 AUC | Day-1 PTA | **Steady-state PTA** |
+|---|---|---|---|---|---|
+| 2 g load → 1 g q12h | **18.9 h** | **73.6%** | 449 | **69.4%** | 53.6% |
+| 1 g q12h | 23.0 h | 1.6% | 285 | 1.6% | **53.7%** |
+
+Day-1 attainment goes from 1.6% to 69.4% while steady state does not move.
+That invariance is the lesson, not a bug: the plateau is set by dose rate
+and clearance, so a loading dose buys time, never exposure. Reporting only
+steady state makes the loading dose look pointless; reporting only day 1
+hides why the maintenance dose still has to be right.
+
+For a beta-lactam continuous infusion (`?preset=pip-load-ci`) the same
+point appears in a different metric — the load does not raise the plateau
+at all, it removes the hours spent climbing to it: time to MIC 16 falls
+from **1.02 h to 0.07 h**, and day-1 %fT>MIC rises 95.8 → 99.6.
+
+### Four things this gets right that are easy to get wrong
+
+- **Day 1 is a true [0, 24 h] window, not the first dosing interval.**
+  Scoring interval 1 scores one interval — 6 h for a q6h regimen — and
+  would ignore most of the day.
+- **Day 1 has its own schedule**, with enough doses to cover 24 h.
+  `concFn` sums dose events and decays past the last one, so a [0,24]
+  window on a shorter course would report that decay as a real fall in
+  concentration. Building it separately also means a pinned `ndoses` (for
+  first-dose teaching) does not shrink the day-1 window.
+- **Continuous infusion now supports the whole-course view.** It did not,
+  which made a CI loading dose invisible in every view: the default CI
+  window is the final 24 h, by which time the load has long washed out.
+  Entering a load switches the plot to the whole course automatically, for
+  the same reason.
+- **Day-1 PTA is withheld where the window cannot express the target.** A
+  window starting before the first dose is necessarily sub-therapeutic for
+  part of its length, so a **100% fT>MIC** target cannot be met over
+  [0,24] by any regimen — reporting 0% would say the regimen failed on day
+  1 when it may have been above MIC for 99.6% of it. The attainable
+  ceiling is computed from the simulated population (the fastest subject's
+  ramp) and shown, so the reason is visible; a 50% target is scored
+  normally. Likewise a **trough** target has no meaningful day-1 value:
+  the minimum over a window beginning at the first dose is zero, so a
+  trough minimum would always fail and a trough ceiling always pass.
+
+Patients never reaching the target inside 24 h are excluded from the
+time-to-target percentiles and counted in *Reached* instead — folding
+them in as 24 h would understate the delay and hide that some never got
+there at all.
+
+For vancomycin this is arguably a correctness improvement rather than only
+a feature: the 400–600 mg·h/L target is defined on **AUC(0–24)**, so the
+day-1 number is the target as published, while the steady-state AUC we
+also report is an extrapolation from the evaluated interval.
 
 ## Seeing what the Bayesian fit changed
 

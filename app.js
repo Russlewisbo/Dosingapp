@@ -401,14 +401,19 @@
     if (Q.dose || Q.ci) {
       var list = [];
       if (bool(Q.ci, false)) {
-        list.push({ label: 'CI', mode: 'ci', dose24: num(Q.dose24, 16000), on: true });
+        list.push({ label: 'CI', mode: 'ci', dose24: num(Q.dose24, 16000), on: true,
+                    loadingDose: Q.load ? num(Q.load, 0) : undefined,
+                    loadingTinf: Q.loadtinf ? num(Q.loadtinf, 0) : undefined });
       } else {
         list.push({ label: 'A', dose: num(Q.dose, d.dose), tau: num(Q.tau, d.tau),
-                    tinf: num(Q.tinf, d.tinf), on: true });
+                    tinf: num(Q.tinf, d.tinf), on: true,
+                    loadingDose: Q.load ? num(Q.load, 0) : undefined,
+                    loadingTinf: Q.loadtinf ? num(Q.loadtinf, 0) : undefined });
       }
       if (Q.dose2) {
         list.push({ label: 'B', dose: num(Q.dose2, d.dose), tau: num(Q.tau2, d.tau),
-                    tinf: num(Q.tinf2, d.tinf), on: true });
+                    tinf: num(Q.tinf2, d.tinf), on: true,
+                    loadingDose: Q.load2 ? num(Q.load2, 0) : undefined });
       }
       if (Q.dose3) {
         list.push({ label: 'C', dose: num(Q.dose3, d.dose), tau: num(Q.tau3, d.tau),
@@ -426,9 +431,16 @@
   }
 
   function regLabel(r) {
-    if (r.mode === 'ci') return (r.dose24 / 1000) + ' g/24 h CI';
-    return (r.dose >= 1000 ? (r.dose / 1000) + ' g' : r.dose + ' mg') +
-           ' q' + r.tau + 'h, ' + r.tinf + ' h inf';
+    var mg = function (v) {
+      return v >= 1000 ? (v / 1000) + ' g' : v + ' mg';
+    };
+    var s = r.mode === 'ci'
+      ? (r.dose24 / 1000) + ' g/24 h CI'
+      : mg(r.dose) + ' q' + r.tau + 'h, ' + r.tinf + ' h inf';
+    // Named in the label so every table row and legend entry identifies
+    // the loaded arm without the regimen card being on screen.
+    if (r.loadingDose > 0) s = mg(r.loadingDose) + ' load \u2192 ' + s;
+    return s;
   }
 
   function renderRegimens() {
@@ -458,12 +470,46 @@
             '<div><label>&tau; (h)</label><input type="number" step="1" data-f="tau" data-i="' + i + '" value="' + r.tau + '"></div>' +
             '<div><label>Inf (h)</label><input type="number" step="0.25" data-f="tinf" data-i="' + i + '" value="' + r.tinf + '"></div>' +
             '</div>');
+      // Loading dose applies to both modes. Blank/0 means none, so the
+      // field is always present rather than behind a disclosure — a
+      // control students have to find is a control they will not use.
+      var ld = document.createElement('div');
+      ld.className = 'row r2';
+      ld.style.cssText = 'margin-top:5px';
+      ld.innerHTML =
+        '<div><label>Loading dose (mg)</label>' +
+        '<input type="number" step="250" min="0" data-f="loadingDose" data-i="' + i + '" ' +
+        'value="' + (r.loadingDose || '') + '" placeholder="none"></div>' +
+        '<div><label>Load infusion (h)</label>' +
+        '<input type="number" step="0.25" min="0" data-f="loadingTinf" data-i="' + i + '" ' +
+        'value="' + (r.loadingTinf || '') + '" placeholder="' +
+        (r.mode === 'ci' ? '0.5' : (r.tinf || 1)) + '"></div>';
+      d.appendChild(ld);
       host.appendChild(d);
     });
     host.querySelectorAll('input[data-f]').forEach(function (el) {
       el.addEventListener('input', function () {
-        var i = +el.getAttribute('data-i'), f = el.getAttribute('data-f');
-        S.regimens[i][f] = parseFloat(el.value);
+        var i = +el.getAttribute('data-i'), f = el.getAttribute('data-f'),
+            v = parseFloat(el.value);
+        // An emptied loading-dose field means "no load", not NaN — which
+        // would otherwise reach buildSchedule and make rate NaN, taking
+        // the whole profile with it.
+        if (el.value === '' || !isFinite(v)) {
+          if (f === 'loadingDose' || f === 'loadingTinf') delete S.regimens[i][f];
+          else return;
+        } else {
+          S.regimens[i][f] = v;
+        }
+        /* A loading dose is invisible in the default single-interval
+           steady-state view — the plateau is R0/CL and the steady-state
+           interval looks identical either way, which is itself the
+           lesson but makes the control look broken. Switching to the
+           whole course on the first load entered shows what it does. */
+        if (f === 'loadingDose' && isFinite(v) && v > 0 && !S.plotWhole) {
+          S.plotWhole = true;
+          var pwEl = $('plotWhole'); if (pwEl) pwEl.checked = true;
+          var wwEl = $('wWhole'); if (wwEl) wwEl.value = '1';
+        }
         run();
       });
     });
@@ -618,6 +664,13 @@
         ? { mode: 'ci', dose24: r.dose24, duration: 24 * 5 }
         : { dose: r.dose, tau: r.tau, tinf: r.tinf };
       if (r.mode !== 'ci' && S.nDoses) reg.nDoses = S.nDoses;
+      // The loading fields have to be copied explicitly: this object is
+      // rebuilt rather than passed through, so anything not named here is
+      // silently dropped before it reaches buildSchedule.
+      if (r.loadingDose > 0) {
+        reg.loadingDose = r.loadingDose;
+        if (r.loadingTinf > 0) reg.loadingTinf = r.loadingTinf;
+      }
       var res = P.simulate({
         model: m, cov: cov, regimen: reg, target: t, mics: mics,
         mic: S.mic, n: S.n, seed: S.seed,
@@ -633,6 +686,7 @@
     drawPta(results, t);
     drawConc(results, t);
     drawSummary(results, t);
+    drawDay1(results, t);
     drawCfr(results);
     drawRenal();
     drawCourseNote(results);
@@ -960,6 +1014,98 @@
   function fmt(x, d) {
     if (x == null || !isFinite(x)) return '—';
     return x.toFixed(d == null ? 1 : d);
+  }
+
+  /* ------------------------------------------------------------------
+     Day one.
+
+     Steady-state attainment answers "will this regimen work", but not
+     "when". For a drug that takes days to accumulate those are different
+     questions with different answers, and the second is the one a
+     loading dose exists to change — while leaving the first untouched,
+     because the plateau is set by dose rate and clearance, not by how
+     therapy started. That invariance is the point, so both numbers are
+     shown side by side rather than one replacing the other.
+
+     The headline is TIME TO TARGET rather than day-1 attainment: "0.9 h
+     versus 14 h" is a sharper statement than "71% versus 2%", and it is
+     the quantity that maps onto the clinical decision.
+     ------------------------------------------------------------------ */
+  function drawDay1(results, t) {
+    var host = $('day1');
+    if (!host) return;
+    var anyLoad = results.some(function (r) { return r.loaded; }),
+        d0 = results[0].day1,
+        isAuc = t.type === 'auc' || t.type === 'aucmic',
+        unit = isAuc ? ' mg·h/L' : '%';
+
+    var rows = results.map(function (r) {
+      var d = r.day1, tt = d.timeToTarget,
+          lab = r.label + (r.loaded
+            ? ' <span class="pill ok">loaded</span>'
+            : '');
+      return '<tr><td>' + lab + '</td>' +
+        '<td class="num">' +
+          (tt.median == null
+            ? '<span style="color:var(--bad)">not within 24 h</span>'
+            : '<b>' + fmt(tt.median, tt.median < 2 ? 2 : 1) + ' h</b>' +
+              (tt.p5 != null && tt.p95 != null
+                ? '<small> (' + fmt(tt.p5, tt.p5 < 2 ? 2 : 1) + '–' +
+                  fmt(tt.p95, 1) + ')</small>'
+                : '')) +
+        '</td>' +
+        '<td class="num">' + fmt(tt.fractionReached) + '%</td>' +
+        '<td class="num">' + fmt(d.auc24.median, 0) + '</td>' +
+        '<td class="num">' + fmt(d.tAbove.median) + '</td>' +
+        '<td class="num">' +
+          (d.pta == null ? '—' : fmt(d.pta) + '%') + '</td>' +
+        '<td class="num">' + fmt(r.ptaAtRefMic) + '%</td></tr>';
+    }).join('');
+
+    host.innerHTML =
+      '<table><thead><tr><th>Regimen</th>' +
+      '<th class="num">Time to ' + (isAuc ? 'target AUC' : 'target') + '<br>' +
+        '<small>median (5–95th)</small></th>' +
+      '<th class="num">Reached<br><small>within 24 h</small></th>' +
+      '<th class="num">Day-1 AUC<br><small>mg·h/L</small></th>' +
+      '<th class="num">Day-1<br><small>%fT&gt;MIC</small></th>' +
+      '<th class="num">Day-1 PTA</th>' +
+      '<th class="num">Steady-state PTA</th></tr></thead><tbody>' +
+      rows + '</tbody></table>' +
+      (d0.ceilingBinds
+        ? '<p class="note" style="margin-top:9px"><b>Day-1 PTA is not ' +
+          'reported for this target.</b> A window that starts before the ' +
+          'first dose is necessarily sub-therapeutic for part of its ' +
+          'length, so ' + t.label + ' cannot be met over 24 h by any ' +
+          'regimen: the highest %fT&gt;MIC attainable here is ' +
+          fmt(d0.ptaCeiling, 1) + '%. Read the day-1 %fT&gt;MIC column ' +
+          'instead — that is where a loading dose shows up.</p>'
+        : (d0.meaningful
+            ? ''
+            : '<p class="note" style="margin-top:9px">Day-1 PTA is not ' +
+              'reported for a trough target. The minimum concentration ' +
+              'over a window beginning at the first dose is zero, so a ' +
+              'trough minimum would always fail and a trough ceiling ' +
+              'would always pass. Time to target and day-1 AUC are still ' +
+              'meaningful.</p>')) +
+      '<p class="cite" style="margin-top:8px">Day 1 is a true [0, 24 h] ' +
+      'window from the first dose, simulated on its own schedule with ' +
+      'enough doses to cover the day' +
+      (d0.nDoses ? ' (' + d0.nDoses + ' maintenance dose' +
+        (d0.nDoses === 1 ? '' : 's') + ')' : '') +
+      ' — not the first dosing interval, which for a short interval would ' +
+      'ignore most of the day. Time to target is the first crossing of ' +
+      (isAuc ? 'the target AUC by the cumulative area'
+             : 'MIC by the free concentration') +
+      '; patients never reaching it are excluded from the percentiles and ' +
+      'counted in <i>Reached</i> instead, so a long delay is not confused ' +
+      'with a failure to get there at all.' +
+      (anyLoad
+        ? ' <b>Note the steady-state column.</b> A loading dose changes ' +
+          'how fast exposure is reached, not the plateau it reaches — ' +
+          'that is set by dose rate and clearance.'
+        : '') +
+      '</p>';
   }
 
   function drawSummary(results, t) {
@@ -1307,6 +1453,11 @@
     if (S.nDoses) p.push('ndoses=' + S.nDoses);
     if (S.evalDose) p.push('evaldose=' + S.evalDose);
     if (S.plotWhole) p.push('whole=1');
+    if (S.regimens[0] && S.regimens[0].loadingDose > 0) {
+      p.push('load=' + S.regimens[0].loadingDose);
+      if (S.regimens[0].loadingTinf > 0) p.push('loadtinf=' + S.regimens[0].loadingTinf);
+    }
+    if (S.regimens[1] && S.regimens[1].loadingDose > 0) p.push('load2=' + S.regimens[1].loadingDose);
     if (!S.bayes) p.push('bayes=0');
     if (!S.fitView) p.push('fitview=0');
     if (S.cov.ecmo) p.push('ecmo=1');
@@ -1490,8 +1641,21 @@
         var o = { label: r.label || 'ABC'.charAt(i), on: true };
         if (r.mode === 'ci') { o.mode = 'ci'; o.dose24 = r.dose24; }
         else { o.dose = r.dose; o.tau = r.tau; o.tinf = r.tinf; }
+        // Copied explicitly, like everything else here: a field omitted
+        // from this map is silently absent from the loaded scenario.
+        if (r.loadingDose > 0) {
+          o.loadingDose = r.loadingDose;
+          if (r.loadingTinf > 0) o.loadingTinf = r.loadingTinf;
+        }
         return o;
       });
+    }
+    /* A preset may need the whole-course view to show anything at all —
+       a loading-dose comparison is invisible in the single-interval
+       steady-state view, where both arms are identical by construction.
+       An explicit whole= in the URL still wins. */
+    if (PRE && PRE.whole && !Q.whole) {
+      S.plotWhole = true;
     }
     if (Q.crcl) setRenalDirect(num(Q.crcl, 80));
     if (Q.egfr) setRenalDirect(num(Q.egfr, 80));

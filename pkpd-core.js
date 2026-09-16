@@ -218,15 +218,32 @@
         ev.push({ t0: 0, tinf: lt, rate: reg.loadingDose / lt });
       }
       ev.push({ t0: 0, tinf: hours, rate: reg.dose24 / 24 });
-      return { events: ev, tau: hours, tEnd: hours, ci: true };
+      return { events: ev, tau: hours, tEnd: hours, ci: true,
+               loaded: reg.loadingDose > 0, t0Maint: 0 };
     }
     var n = reg.nDoses || 1,
-        tinf = Math.max(reg.tinf, 1e-6);
+        tinf = Math.max(reg.tinf, 1e-6),
+        loaded = reg.loadingDose > 0,
+        // A loading dose defaults to the maintenance infusion duration,
+        // not to 0.5 h: a 25-30 mg/kg vancomycin load is infused over
+        // hours, and borrowing the CI default would give it an
+        // unrealistically high peak.
+        lt = loaded ? (reg.loadingTinf > 0 ? reg.loadingTinf : tinf) : 0,
+        /* Maintenance starts ONE INTERVAL after the load, which is how
+           loading is actually prescribed: 25 mg/kg now, then 15 mg/kg
+           q12h starting 12 h later. Putting the first maintenance dose at
+           t = 0 alongside the load would double the first dose instead of
+           replacing it. Every downstream interval index is therefore
+           offset by t0Maint, which is why it is returned rather than
+           recomputed by callers. */
+        t0M = loaded ? reg.tau : 0;
+    if (loaded) ev.push({ t0: 0, tinf: lt, rate: reg.loadingDose / lt });
     for (i = 0; i < n; i++) {
-      ev.push({ t0: i * reg.tau, tinf: tinf, rate: reg.dose / tinf });
+      ev.push({ t0: t0M + i * reg.tau, tinf: tinf, rate: reg.dose / tinf });
     }
     return { events: ev, tau: reg.tau, tinf: tinf,
-             tEnd: (n - 1) * reg.tau + reg.tau, ci: false };
+             loaded: loaded, loadingTinf: lt, t0Maint: t0M,
+             tEnd: t0M + n * reg.tau, ci: false };
   }
 
   // Number of doses needed to be at (practical) steady state, then a few
@@ -258,6 +275,74 @@
   /* ---------------------------------------------------------------
      5. Exposure metrics over an evaluation window [tA, tB].
      --------------------------------------------------------------- */
+  /* Time from the first dose until therapeutic exposure is first
+     reached, within a window (hours), or null if never reached.
+
+     "Therapeutic" has to be defined per target type, because the targets
+     in this library are not all concentrations:
+
+       - concentration-driven targets (%fT>MIC, Cmax/MIC, Cmin/MIC) are a
+         free-concentration crossing of MIC x multiplier;
+       - AUC targets are reached when the CUMULATIVE AUC from the first
+         dose reaches the target, which is exactly what "time to
+         therapeutic exposure" means for vancomycin — the 400-600
+         mg.h/L window is defined on AUC(0-24), so the quantity that has
+         to accumulate is the area, not a concentration;
+       - a trough CEILING is a safety constraint, not an efficacy one:
+         it is satisfied trivially before the first dose, so a crossing
+         time is meaningless and null is returned rather than 0.
+
+     Found by scanning then bisecting, so the answer does not depend on
+     landing exactly on a grid node. */
+  function timeToTarget(cf, target, mic, fu, tEnd, nGrid) {
+    var N = nGrid || 480, h = tEnd / N, i, t, c;
+    var thr = mic * (target.micMultiplier || 1);
+
+    if (target.type === 'auc' || target.type === 'aucmic') {
+      var need = target.type === 'auc' ? target.lo : target.threshold * mic,
+          acc = 0, prev = cf(0), cur;
+      if (!(need > 0)) return null;
+      for (i = 1; i <= N; i++) {
+        t = i * h;
+        cur = cf(t);
+        var addF = 0.5 * (prev + cur) * h * (target.type === 'aucmic' ? fu : 1);
+        if (acc + addF >= need) {
+          // Linear interpolation inside the trapezoid that crosses.
+          var frac = addF > 0 ? (need - acc) / addF : 0;
+          return (i - 1) * h + frac * h;
+        }
+        acc += addF;
+        prev = cur;
+      }
+      return null;
+    }
+
+    if (target.type === 'cminceil') return null;
+    if (target.type === 'composite') {
+      // Score the efficacy component; the ceiling has no crossing time.
+      var eff = (target.all || []).filter(function (x) {
+        return x.type !== 'cminceil';
+      })[0];
+      return eff ? timeToTarget(cf, eff, mic, fu, tEnd, N) : null;
+    }
+    if (target.type === 'cmin' && target.lo > 0) thr = target.lo / fu;
+    if (!(thr > 0)) return null;
+
+    var lo = null;
+    for (i = 0; i <= N; i++) {
+      t = i * h;
+      if (fu * cf(t) >= thr) { lo = t; break; }
+    }
+    if (lo === null) return null;
+    if (lo === 0) return 0;
+    var a = lo - h, b = lo;
+    for (i = 0; i < 40; i++) {
+      var mid = 0.5 * (a + b);
+      if (fu * cf(mid) >= thr) b = mid; else a = mid;
+    }
+    return 0.5 * (a + b);
+  }
+
   function metrics(cf, tA, tB, opts) {
     var nGrid = (opts && opts.nGrid) || 400,
         fu = (opts && opts.fu != null) ? opts.fu : 1,
@@ -586,12 +671,22 @@
         // one, and the answer differs for any drug that accumulates.
         evalK = sched.ci ? 0
           : Math.min(Math.max(1, (!cfg.evalDose || cfg.evalDose === 'last') ? nd : cfg.evalDose), nd),
-        tA = sched.ci ? Math.max(0, sched.tEnd - 24) : (evalK - 1) * tau,
-        tB = sched.ci ? sched.tEnd : evalK * tau,
-        // The PLOT window is independent of the evaluation window:
-        // showing the whole course makes accumulation visible while the
-        // reported metrics still come from the single evaluated interval.
-        whole = !!cfg.plotWhole && !sched.ci,
+        // Offset by the first maintenance dose: with a loading dose the
+        // maintenance intervals start at t = tau, so interval k spans
+        // t0Maint + (k-1)tau to t0Maint + k*tau. Without a load t0Maint
+        // is 0 and this is the original expression.
+        tA = sched.ci ? Math.max(0, sched.tEnd - 24)
+                      : sched.t0Maint + (evalK - 1) * tau,
+        tB = sched.ci ? sched.tEnd : sched.t0Maint + evalK * tau,
+        /* The PLOT window is independent of the evaluation window:
+           showing the whole course makes accumulation visible while the
+           reported metrics still come from the single evaluated
+           interval. Whole-course now applies to CONTINUOUS INFUSION too.
+           It previously did not, which made a loading dose in front of a
+           CI invisible in every view — the default CI window is the
+           final 24 h, by which time the load has long washed out, and
+           the plateau is R0/CL with or without it. */
+        whole = !!cfg.plotWhole,
         tPlotA = whole ? 0 : tA,
         tPlotB = whole ? sched.tEnd : tB;
 
@@ -657,6 +752,87 @@
       var tPk = tA + (sched.tinf || 0) + 1;
       for (j = 0; j < n; j++) exposures[j].peak1h = perSubj[j].cf(tPk);
     }
+    /* ---- DAY ONE -------------------------------------------------
+       Attainment over the first 24 h from the first dose, which is the
+       question a loading dose exists to answer and which the
+       steady-state number cannot address.
+
+       Three things this deliberately does NOT do:
+
+       - It does not reuse the evalDose machinery. Scoring interval 1
+         scores ONE interval — 8 h for a q8h regimen — and would ignore
+         the rest of the day, understating day-1 attainment.
+       - It does not lengthen the displayed course. Day 1 gets its OWN
+         schedule with enough doses to cover 24 h, because concFn simply
+         sums events and decays past the last one: a [0,24] window on a
+         shorter course would report that decay as a real fall in
+         concentration. Building it separately leaves a caller's pinned
+         nDoses (first-dose teaching cases) untouched.
+       - It does not report day-1 attainment for targets a [0,24] window
+         cannot express. Cmin over a window starting at t = 0 is zero,
+         because the patient had no drug before the first dose — so a
+         trough MINIMUM target would always fail and a trough CEILING
+         would always pass, both meaninglessly. Those get null and the
+         caller says why, rather than a confidently wrong percentage.
+       ---------------------------------------------------------------- */
+    var DAY = 24,
+        reg24 = {}, kk;
+    for (kk in regEff) if (Object.prototype.hasOwnProperty.call(regEff, kk)) reg24[kk] = regEff[kk];
+    if (!sched.ci) {
+      reg24.nDoses = Math.max(1, Math.ceil((DAY - (sched.t0Maint || 0)) / regEff.tau));
+    } else {
+      reg24.duration = Math.max(DAY, regEff.duration || DAY);
+    }
+    var sched24 = buildSchedule(reg24),
+        day1 = [], tToTarget = [],
+        // Day 1 is a fixed 24 h regardless of tau, so a fixed grid gives
+        // a known 0.1 h resolution rather than one that drifts with the
+        // interval length.
+        n24 = cfg.nGrid24 || 240;
+    for (j = 0; j < n; j++) {
+      var cf24 = concFn(subjects[j], model.ncmt, sched24);
+      day1.push(metrics(cf24, 0, DAY, {
+        fu: model.fu, mic: refMic * micEff, nGrid: n24
+      }));
+      tToTarget.push(timeToTarget(cf24, target, refMic, model.fu, DAY, n24 * 2));
+    }
+    // Subjects never reaching the target inside 24 h are kept OUT of the
+    // time-to-target percentiles and reported as a separate fraction:
+    // folding them in as 24 h would understate the delay and hide that
+    // some patients never got there at all.
+    var reached = tToTarget.filter(function (v) { return v != null; })
+                           .sort(function (a, b) { return a - b; });
+
+    /* A day-1 window starts before the first dose, so some of it is
+       necessarily sub-therapeutic however the drug is given. For a
+       %fT>MIC target that puts a CEILING on day-1 attainment: a 100%
+       fT>MIC target cannot be met over [0,24] by any regimen, and
+       reporting 0% would say the regimen failed on day 1 when it may
+       have been above MIC for 99.6% of it.
+
+       The ceiling is computed from the simulated population rather than
+       assumed — the fastest subject's time to target is the least
+       sub-therapeutic time achievable here — so a 50% target is scored
+       normally while a 100% one is flagged as unattainable on this
+       window, with the ceiling shown so the reason is visible. */
+    var reachedSorted = reached,
+        fastest = reachedSorted.length ? reachedSorted[0] : null,
+        ptaCeiling = (target.type === 'ftmic' && fastest != null)
+          ? 100 * (1 - fastest / DAY) : null,
+        ceilingBinds = ptaCeiling != null && target.threshold > ptaCeiling + 1e-9,
+        day1Meaningful = ['ftmic', 'auc', 'aucmic', 'cmaxmic'].indexOf(target.type) >= 0
+                         && !ceilingBinds,
+        ptaDay1 = null;
+    if (day1Meaningful) {
+      var kd = 0;
+      for (j = 0; j < n; j++) if (meetsTarget(day1[j], target, refMic)) kd++;
+      ptaDay1 = (100 * kd) / n;
+    }
+    function summ24(field) {
+      var v = day1.map(function (e) { return e[field]; })
+                  .sort(function (a, b) { return a - b; });
+      return { median: percentile(v, 0.5), p5: percentile(v, 0.05), p95: percentile(v, 0.95) };
+    }
     var ptaRef = 0;
     for (j = 0; j < n; j++) if (meetsTarget(exposures[j], target, refMic)) ptaRef++;
 
@@ -687,6 +863,26 @@
       atSteadyState: sched.ci ? true : evalK >= ssDoses,
       median: med, lo: lo, hi: hi, typical: typCurve,
       typicalParams: typ,
+      loaded: !!sched.loaded, t0Maint: sched.t0Maint || 0,
+      day1: {
+        // null when a [0,24] window cannot express this target type
+        pta: ptaDay1,
+        meaningful: day1Meaningful,
+        // Highest %fT>MIC any simulated subject could reach over [0,24],
+        // set by the unavoidable pre-therapeutic period. null for
+        // non-%fT>MIC targets, where no such ceiling applies.
+        ptaCeiling: ptaCeiling,
+        ceilingBinds: !!ceilingBinds,
+        auc24: summ24('auc24'), fauc24: summ24('fauc24'),
+        tAbove: summ24('tAbove'), cmax: summ24('cmax'),
+        nDoses: sched24.ci ? 0 : reg24.nDoses,
+        timeToTarget: {
+          median: reached.length ? percentile(reached, 0.5) : null,
+          p5: reached.length ? percentile(reached, 0.05) : null,
+          p95: reached.length ? percentile(reached, 0.95) : null,
+          fractionReached: (100 * reached.length) / n
+        }
+      },
       pta: pta,
       ptaAtRefMic: (100 * ptaRef) / n,
       exposure: {
@@ -886,6 +1082,7 @@
   var API = {
     rng: rng, normals: normals,
     cockcroftGault: cockcroftGault, ckdEpiCr: ckdEpiCr, ckdEpiCysC: ckdEpiCysC,
+    timeToTarget: timeToTarget,
     mdrd: mdrd, jelliffe: jelliffe, bsaMosteller: bsaMosteller,
     ffmJanmahasatian: ffmJanmahasatian,
     ibwDevine: ibwDevine, scrToMgdl: scrToMgdl,
