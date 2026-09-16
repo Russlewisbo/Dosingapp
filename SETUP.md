@@ -142,6 +142,38 @@ Run it in the folder that contains `mipd-lab.html`.
 
 ---
 
+## Before you commit: reconcile the documented counts
+
+STATUS.md records the check count per suite and in total. Do not edit
+those by hand — run:
+
+```bash
+python build.py
+quarto render slides-demo.qmd --to revealjs   # test-slides/test-deck need this
+python sync-status.py                          # write the numbers
+python sync-status.py --check                  # verify; non-zero on mismatch
+```
+
+`sync-status.py` iterates to a fixed point, and it has to. `test-app.cjs`
+asserts STATUS.md's own contents, so its pass count *depends* on
+STATUS.md while STATUS.md's documented count depends on it. A single pass
+publishes the count from before its own edit — which is precisely how the
+table once came to read `test-app.cjs | 185` when the suite reported 186:
+writing the corrected file size flipped an assertion from fail to pass,
+adding the very check the table had just been told about.
+
+The in-suite assertions check that the headline equals the sum of
+STATUS.md's own table. That catches an internally inconsistent document
+but *not* a table uniformly one behind the real run, because a suite
+cannot cheaply audit its own aggregate pass count — reading it changes
+it. `--check` is the gate that compares against a live measured run, so
+it belongs in the release step rather than in the suites.
+
+Two safety properties, both tested: a failure in a STATUS.md-consistency
+assertion does **not** block the write (otherwise a stale document
+deadlocks its own repair), while any other failure does (writing fresh
+numbers over a real regression would launder it).
+
 ## Adding a model
 
 The schema and a worked example are in `README.md`. The house rule: a

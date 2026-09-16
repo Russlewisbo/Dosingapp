@@ -21,7 +21,7 @@ file that embeds live in Quarto/reveal.js teaching slides.
 | Models implemented | 13 (7 drugs) |
 | Models documented but not implemented | 0 |
 | Teaching presets | 11, each loadable with `?preset=<id>` |
-| Test checks passing | **514** across 6 suites |
+| Test checks passing | **515** across 6 suites |
 | Slide deck | `slides-demo.qmd`, renders under Quarto 1.6.43 |
 
 ### Architecture
@@ -213,12 +213,14 @@ asserts the inconsistency, so it is regression-tested rather than tuned away.
 | Suite | Checks | What it establishes |
 |---|---|---|
 | `test-core.cjs` | 85 | Engine against known answers: analytic 2-cmt vs RK4 integration, steady-state AUC over τ = Dose/CL, CI plateau = R₀/CL, MAP recovery, correlated-IIV and micro-constant samplers, renal estimators, per-model covariate equations, concentration-dependent and trough-ceiling targets |
-| `test-app.cjs` | 185 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, preset loading, disclosure of omissions, and documentation-consistency checks against the library |
+| `test-app.cjs` | 186 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, preset loading, disclosure of omissions, and documentation-consistency checks against the library |
 | `test-layout.cjs` | 149 | Canvas geometry: clipped text, overlapping tick labels, out-of-canvas vertices, NaN coordinates, at full / widget / 380 px widths |
 | `validate.cjs` | 76 | Published quantities reproduced from independently coded parameters (with two documented non-reproductions asserted as such) |
 | `test-slides.cjs` | 13 | Every widget URL in the *rendered* deck boots with the right model and target |
 | `test-deck.cjs` | 6 | The rendered deck actually finds the app beside it, with a negative control that fails when it is absent |
 
+
+These counts are written by `sync-status.py`, which iterates to a fixed point because `test-app.cjs` asserts this document's own contents; `python sync-status.py --check` verifies them against a live run and is the release gate. Do not edit them by hand.
 ### Published quantities reproduced
 
 - **Kim 2022** — at eGFR 150 / MIC 16, 16 g/day as 0.5 h infusion reaches
