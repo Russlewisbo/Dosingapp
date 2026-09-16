@@ -1,7 +1,8 @@
 # MIPD Lab — project status
 
-**Last updated:** 2026-09-14
-**State:** working, tested, not yet opened in a real browser (see *Known gaps*)
+**Last updated:** 2026-09-16
+**State:** working, tested, and published at
+<https://russlewisbo.github.io/Dosingapp/> (see *Known gaps*)
 
 A browser-based model-informed precision dosing tool in the shape of
 [TDMx](https://www.tdmx.eu/) — a patient record plus a library of published
@@ -15,10 +16,12 @@ file that embeds live in Quarto/reveal.js teaching slides.
 
 | | |
 |---|---|
-| Deliverable | `mipd-lab.html` — one self-contained file, 133 KB, no CDN, no server, no network requests (the only external URLs are the clickable DOI citation links) |
-| Models implemented | 6 (3 drugs) |
-| Models documented but not implemented | 4, each with the reason shown in-app |
-| Test checks passing | **469** across 6 suites |
+| Deliverable | `mipd-lab.html` — one self-contained file, 160 KB, no CDN, no server, no network requests (the only external URLs are the clickable DOI citation links) |
+| Published at | <https://russlewisbo.github.io/Dosingapp/> — GitHub Pages, served from `main` at root, HTTPS enforced |
+| Models implemented | 13 (7 drugs) |
+| Models documented but not implemented | 0 |
+| Teaching presets | 11, each loadable with `?preset=<id>` |
+| Test checks passing | **477** across 6 suites |
 | Slide deck | `slides-demo.qmd`, renders under Quarto 1.6.43 |
 
 ### Architecture
@@ -203,17 +206,18 @@ asserts the inconsistency, so it is regression-tested rather than tuned away.
 
 ## Verification
 
-`node test-core.cjs && node test-app.cjs && node test-layout.cjs && node validate.cjs && node test-slides.cjs`
+`for f in test-core test-app test-layout validate test-slides test-deck; do node $f.cjs; done`
 (requires `npm install jsdom`; `test-slides.cjs` additionally requires
 `quarto render slides-demo.qmd` first).
 
 | Suite | Checks | What it establishes |
 |---|---|---|
-| `test-core.cjs` | 64 | Engine against known answers: analytic 2-cmt vs RK4 integration (max rel. err 4×10⁻¹³), steady-state AUC over τ = Dose/CL, CI plateau = R₀/CL, MAP recovery, correlated-IIV sampler, renal estimators, per-model covariate equations |
-| `test-app.cjs` | 123 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, disclosure of omissions |
-| `test-layout.cjs` | 104 | Canvas geometry: clipped text, overlapping tick labels, out-of-canvas vertices, NaN coordinates, at full / widget / 380 px widths |
-| `validate.cjs` | 42 | Published quantities reproduced from independently coded parameters |
-| `test-slides.cjs` | 9 | Every widget URL in the *rendered* deck boots with the right model and target |
+| `test-core.cjs` | 78 | Engine against known answers: analytic 2-cmt vs RK4 integration, steady-state AUC over τ = Dose/CL, CI plateau = R₀/CL, MAP recovery, correlated-IIV and micro-constant samplers, renal estimators, per-model covariate equations, concentration-dependent and trough-ceiling targets |
+| `test-app.cjs` | 175 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, preset loading, disclosure of omissions, and documentation-consistency checks against the library |
+| `test-layout.cjs` | 129 | Canvas geometry: clipped text, overlapping tick labels, out-of-canvas vertices, NaN coordinates, at full / widget / 380 px widths |
+| `validate.cjs` | 76 | Published quantities reproduced from independently coded parameters (with two documented non-reproductions asserted as such) |
+| `test-slides.cjs` | 13 | Every widget URL in the *rendered* deck boots with the right model and target |
+| `test-deck.cjs` | 6 | The rendered deck actually finds the app beside it, with a negative control that fails when it is absent |
 
 ### Published quantities reproduced
 
@@ -265,15 +269,21 @@ asserts the inconsistency, so it is regression-tested rather than tuned away.
 
 ## Known gaps
 
-1. **Still not openable in a real browser from the build environment** —
-   the headless Chromium download redirects to a network-denylisted host,
-   so geometry is verified by auditing canvas draw-call coordinates. The
-   app HAS now been opened in a real browser by the user, which
-   immediately found the stale-header bug (since fixed); treat further
-   visual checks as worthwhile for the same reason.
-2. Li 2006 and Ehmann 2019 await PDFs.
-3. No cefepime model — the originally-planned drug — because the candidate
-   model is nonparametric.
+1. **No real-browser render from the build environment** — the headless
+   Chromium download redirects to a network-denylisted host, so geometry
+   is verified by auditing canvas draw-call coordinates instead. That is
+   not the same as looking at it: opening the app in a real browser has
+   twice found defects the headless suites could not see (a stale page
+   header, and a clipped concentration axis). The published copy has been
+   fetched and booted from its live URL, and the served bytes checked
+   identical to the committed build, but a human visual check remains
+   worthwhile before teaching from it.
+2. **Paediatric tobramycin is approximate** — Hennig 2013's SCR<sub>mean</sub>
+   reference values are tabulated for adults only; the age relationship for
+   children is not reproduced in the paper, so under-18 falls back to the
+   reported paediatric median.
+3. **Three models cannot support MAP forecasting** — Udy 2015, Nicasio 2009
+   and Romano 1998, each for a documented reason shown in the app.
 4. Assumption/residual diagnostics on the implemented models were not
    assessed; the models are taken as published.
 

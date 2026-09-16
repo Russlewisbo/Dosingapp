@@ -312,12 +312,17 @@ are total-drug AUC, as the guidelines define them.
   (380 px) widths. It found a real bug during development: log-scale
   gridlines were computing `log10` of a tick *object* and silently
   vanishing.
-- **Not done:** the app has not been opened in a real browser from this
-  environment — the headless Chromium download resolves to a
+- **Not done here:** the app is not rendered in a real browser from the
+  build environment — the headless Chromium download resolves to a
   network-denylisted host. Behaviour and geometry are verified through a
   DOM implementation with an instrumented canvas, which is not the same as
-  looking at it. Worth a one-minute visual check on your machine before
-  you teach from it.
+  looking at it, and opening it in a real browser has twice found defects
+  these suites could not see (a stale page header, a clipped concentration
+  axis). The published copy at
+  <https://russlewisbo.github.io/Dosingapp/> has been fetched and booted
+  from its live URL with the served bytes checked identical to the
+  committed build, but that is still a DOM check. A one-minute visual look
+  on your own machine is worth it before you teach from it.
 
 ---
 | Meropenem | **Li 2006** ([10.1177/0091270006291035](https://doi.org/10.1177/0091270006291035)) | 2-cmt, total plasma (f<sub>u</sub> 0.98) | CLcr **and age** on CL; weight on V<sub>1</sub> | 20% / 40% *f*T>MIC (the paper's bacteriostatic and bactericidal targets) |

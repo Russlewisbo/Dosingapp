@@ -790,6 +790,44 @@ function boot(search) {
   const setup = fs.readFileSync('SETUP.md', 'utf8');
   const levels = (setup.match(/^## \d+\. /gm) || []).length;
   const words = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six' };
+  /* STATUS.md's summary table is the single most drift-prone thing in the
+     repo: it was left reading "6 (3 drugs) / 133 KB / not yet opened in a
+     real browser" while the same document's body said 13 models across 7
+     drugs. Every number in it is now asserted against the code, and the
+     Verification table is required to sum to the headline figure so the
+     document cannot contradict itself. */
+  const status = fs.readFileSync('STATUS.md', 'utf8');
+  const appKB = Math.round(fs.statSync('mipd-lab.html').size / 1024);
+  ok('STATUS.md states the current model and drug counts',
+     status.includes(`| Models implemented | ${MM.MODELS.length} ` +
+                     `(${new Set(MM.MODELS.map(m => m.drug)).size} drugs) |`),
+     (status.match(/\| Models implemented \|[^|]*\|/) || ['missing'])[0].trim());
+  ok('STATUS.md states the current unimplemented-model count',
+     status.includes(`| Models documented but not implemented | ${MM.PENDING.length} |`),
+     (status.match(/\| Models documented but not implemented \|[^|]*\|/) || ['missing'])[0].trim());
+  ok('STATUS.md states the current preset count',
+     status.includes(`| Teaching presets | ${MM.PRESETS.length},`),
+     (status.match(/\| Teaching presets \|[^|]*/) || ['missing'])[0].trim());
+  ok('STATUS.md states the built file size to the nearest KB',
+     status.includes(`file, ${appKB} KB,`),
+     `measured ${appKB} KB; document says ` +
+     ((status.match(/file, (\d+) KB/) || ['?', '?'])[1]));
+  {
+    // Headline total must equal the sum of the per-suite rows in the same file.
+    const headline = parseInt((status.match(/\| Test checks passing \| \*\*(\d+)\*\*/) || [0, 0])[1], 10);
+    const suites = [...status.matchAll(/^\| `(test-[a-z]+|validate)\.cjs` \| (\d+) \|/gm)];
+    const summed = suites.reduce((a, m) => a + parseInt(m[2], 10), 0);
+    const declared = parseInt((status.match(/across (\d+) suites/) || [0, 0])[1], 10);
+    ok('STATUS.md headline check count equals the sum of its own suite table',
+       headline === summed && headline > 0,
+       `headline ${headline} vs table sum ${summed}`);
+    ok('STATUS.md suite table has a row for every suite it claims',
+       suites.length === declared && declared > 0,
+       `${suites.length} rows vs "across ${declared} suites"`);
+  }
+  ok('STATUS.md no longer claims the app has never been opened in a browser',
+     !/not yet opened in a real browser/.test(status));
+
   ok('SETUP.md states the number of levels it actually documents',
      setup.includes(`${words[levels]} levels`),
      `${levels} numbered sections; header says ` +
