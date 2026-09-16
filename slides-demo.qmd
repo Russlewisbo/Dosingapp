@@ -136,3 +136,44 @@ figure months later.
 
 The file is self-contained: no CDN, no network, no server. It runs from a
 USB stick.
+
+```{=html}
+<!-- Self-check: if mipd-lab.html is not sitting beside this deck, every
+     widget slide renders blank (reveal.js shows the iframe's 404 page).
+     This probes for the app once and replaces a silent blank with an
+     actionable message. -->
+<div id="mipd-missing" style="display:none;position:fixed;inset:auto 0 0 0;z-index:99;
+     background:#b4232a;color:#fff;font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+     padding:14px 18px">
+  <b>The dosing widget could not be loaded.</b><br>
+  <code style="background:rgba(255,255,255,.18);padding:1px 5px;border-radius:3px">mipd-lab.html</code>
+  must sit in the same folder as <code style="background:rgba(255,255,255,.18);padding:1px 5px;border-radius:3px">slides-demo.qmd</code>
+  before you render. Copy it there, re-render, and this message disappears.
+</div>
+<script>
+(function () {
+  var probe = document.createElement('iframe');
+  probe.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;border:0;left:-9999px';
+  var settled = false;
+  function verdict(missing) {
+    if (settled) return;
+    settled = true;
+    if (missing) document.getElementById('mipd-missing').style.display = 'block';
+    if (probe.parentNode) probe.parentNode.removeChild(probe);
+  }
+  probe.onload = function () {
+    // A 404 page loads successfully, so presence of the app's own global is
+    // the test — not the load event. Cross-origin access throws under
+    // file:// in some browsers; in that case assume the file is fine rather
+    // than cry wolf.
+    var ok;
+    try { ok = !!probe.contentWindow.PKPD; } catch (e) { ok = true; }
+    verdict(!ok);
+  };
+  probe.onerror = function () { verdict(true); };
+  probe.src = 'mipd-lab.html?mode=widget&n=20';
+  document.body.appendChild(probe);
+  setTimeout(function () { verdict(false); }, 8000);
+})();
+</script>
+```
