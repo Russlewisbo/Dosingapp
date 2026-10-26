@@ -582,8 +582,10 @@ concentration in a typical patient:
 
 Delaying the first maintenance dose by a full interval drops the patient
 to 2.2 mg/L against an MIC of 2 — on the threshold the load was given to
-stay clear of — and costs 20% of day-1 AUC (294 vs 235 mg·h/L). Starting
-maintenance immediately is why the load was given.
+stay clear of — and costs 20% of day-1 AUC (302 vs 242 mg·h/L, n = 20,000).
+The concentrations in the table above are a single typical patient, so
+they carry no Monte Carlo error; the AUC comparison does.
+Starting maintenance immediately is why the load was given.
 
 Conversely, starting immediately after a *vancomycin* load would stack a
 maintenance dose on top of a load already sized to fill the volume of
@@ -611,10 +613,17 @@ Both attainment columns are shown deliberately. In the vancomycin preset
 
 | | Time to AUC 400 | Reached | Day-1 AUC | Day-1 PTA | **Steady-state PTA** |
 |---|---|---|---|---|---|
-| 2 g load → 1 g q12h | **18.9 h** | **73.6%** | 449 | **69.4%** | 53.6% |
-| 1 g q12h | 23.0 h | 1.6% | 285 | 1.6% | **53.7%** |
+| 2 g load → 1 g q12h | **18.8 h** | **73.3%** | 446 | **69.4%** | 54.3% |
+| 1 g q12h | 22.9 h | 1.7% | 284 | 1.7% | **54.2%** |
 
-Day-1 attainment goes from 1.6% to 69.4% while steady state does not move.
+<sub>n = 20,000 simulated subjects, seed 20250101. These are Monte Carlo
+estimates: at the app's default n = 2,000 the attainment columns move by
+roughly a percentage point, and below about n = 800 steady-state PTA
+drifts several points. The figures published here are therefore quoted at
+a large n so they are stable, and `test-app.cjs` reproduces them from the
+preset at this exact n and seed.</sub>
+
+Day-1 attainment goes from 1.7% to 69.4% while steady state does not move.
 That invariance is the lesson, not a bug: the plateau is set by dose rate
 and clearance, so a loading dose buys time, never exposure. Reporting only
 steady state makes the loading dose look pointless; reporting only day 1
@@ -623,7 +632,8 @@ hides why the maintenance dose still has to be right.
 For a beta-lactam continuous infusion (`?preset=pip-load-ci`) the same
 point appears in a different metric — the load does not raise the plateau
 at all, it removes the hours spent climbing to it: time to MIC 16 falls
-from **1.02 h to 0.07 h**, and day-1 %fT>MIC rises 95.8 → 99.6.
+from **1.02 h to 0.07 h**, and day-1 %fT>MIC rises
+95.8 → 99.6 (same n and seed as above).
 
 ### Four things this gets right that are easy to get wrong
 

@@ -21,7 +21,7 @@ file that embeds live in Quarto/reveal.js teaching slides.
 | Models implemented | 13 (7 drugs) |
 | Models documented but not implemented | 0 |
 | Teaching presets | 13, each loadable with `?preset=<id>` |
-| Test checks passing | **605** across 6 suites |
+| Test checks passing | **617** across 6 suites |
 | Slide deck | `slides-demo.qmd`, renders under Quarto 1.6.43 |
 
 ### Architecture
@@ -213,7 +213,7 @@ asserts the inconsistency, so it is regression-tested rather than tuned away.
 | Suite | Checks | What it establishes |
 |---|---|---|
 | `test-core.cjs` | 120 | Engine against known answers: analytic 2-cmt vs RK4 integration, steady-state AUC over τ = Dose/CL, CI plateau = R₀/CL, MAP recovery, correlated-IIV and micro-constant samplers, renal estimators, per-model covariate equations, concentration-dependent and trough-ceiling targets |
-| `test-app.cjs` | 215 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, preset loading, disclosure of omissions, and documentation-consistency checks against the library |
+| `test-app.cjs` | 227 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, preset loading, disclosure of omissions, and documentation-consistency checks against the library |
 | `test-layout.cjs` | 174 | Canvas geometry: clipped text, overlapping tick labels, out-of-canvas vertices, NaN coordinates, at full / widget / 380 px widths |
 | `validate.cjs` | 76 | Published quantities reproduced from independently coded parameters (with two documented non-reproductions asserted as such) |
 | `test-slides.cjs` | 14 | Every widget URL in the *rendered* deck boots with the right model and target |

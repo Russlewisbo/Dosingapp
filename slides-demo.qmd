@@ -98,11 +98,13 @@ Identical maintenance dosing in both arms. The only difference is a 2 g
 load at t = 0, with maintenance starting 12 h later.
 
 Ask the class to predict what happens to steady-state attainment before
-revealing the table. The answer is nothing: 53.6% vs 53.7%. The plateau
+revealing the table. The answer is nothing: 54.3% vs 54.2%. The plateau
 is set by dose rate and clearance, so a loading dose cannot change it.
 
-What it changes is day 1 — attainment 1.6% to 69.4%, and the fraction of
-patients reaching AUC 400 within 24 h from 1.6% to 73.6%. For vancomycin
+What it changes is day 1 — attainment 1.7% to 69.4%, and the fraction of
+patients reaching AUC 400 within 24 h from 1.7% to 73.3%. (Figures at
+n = 20,000, seed 20250101, matching the README; the slide itself runs a
+smaller n, so the live numbers will differ in the last point or so.) For vancomycin
 this matters more than it looks, because the 400-600 target is defined on
 AUC(0-24): the day-1 column IS the target, not a proxy for it.
 

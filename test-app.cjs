@@ -1078,5 +1078,95 @@ function boot(search) {
   }
 }
 
+/* ---- The README's published loading-dose table must be reproducible.
+
+   Added because that table was generated at one n and later re-verified
+   at another, then described as "unchanged": the attainment columns are
+   Monte Carlo estimates and move by a point or more with the sample
+   size, so a figure published without its n is not checkable at all.
+   These assertions regenerate the table from the preset at the exact n
+   and seed the README names, so the documented numbers cannot drift from
+   the code or be quoted at a different n again. ---- */
+{
+  const fs = require('fs');
+  const P = require('./pkpd-core.js');
+  const { MODELS, PRESETS } = require('./models.js');
+  const readme = fs.readFileSync('README.md', 'utf8');
+
+  const mN = readme.match(/<sub>n = ([\d,]+) simulated subjects, seed (\d+)\./);
+  ok('the README states the n and seed behind its published figures', !!mN,
+     mN ? `n = ${mN[1]}, seed ${mN[2]}` : 'no declaration found');
+
+  if (mN) {
+    const N = parseInt(mN[1].replace(/,/g, ''), 10), SEED = parseInt(mN[2], 10);
+    const pre = PRESETS.find(p => p.id === 'van-load');
+    const m = MODELS.find(x => x.id === pre.model);
+    const T = m.targets.find(t => t.id === pre.target);
+    const cov = Object.assign({}, pre.cov);
+    cov.crcl = P.cockcroftGault(cov);
+    const arms = pre.regimens.map(a => P.simulate({
+      model: m, cov,
+      regimen: { dose: a.dose, tau: a.tau, tinf: a.tinf,
+                 loadingDose: a.loadingDose, loadingTinf: a.loadingTinf,
+                 loadMode: a.loadMode },
+      target: T, mics: [pre.mic], mic: pre.mic, n: N, seed: SEED, plotWhole: true
+    }));
+
+    // The table row for the loaded arm, as published.
+    const rowRe = /\| 2 g load → 1 g q12h \| \*\*([\d.]+) h\*\* \| \*\*([\d.]+)%\*\* \| (\d+) \| \*\*([\d.]+)%\*\* \| ([\d.]+)% \|/;
+    const row = readme.match(rowRe);
+    ok('the README publishes the loaded-arm row in a parseable form', !!row,
+       row ? row[0] : 'row not found');
+    if (row) {
+      const pub = row.slice(1).map(Number);
+      const got = [arms[0].day1.timeToTarget.median,
+                   arms[0].day1.timeToTarget.fractionReached,
+                   arms[0].day1.auc24.median,
+                   arms[0].day1.pta,
+                   arms[0].ptaAtRefMic];
+      const names = ['time to target', 'reached', 'day-1 AUC', 'day-1 PTA',
+                     'steady-state PTA'];
+      got.forEach((g, i) => {
+        // AUC is published to the nearest unit, the rest to 0.1.
+        const tol = i === 2 ? 0.5 : 0.05;
+        ok(`published ${names[i]} reproduces from the preset`,
+           Math.abs(g - pub[i]) <= tol,
+           `README ${pub[i]} vs computed ${g.toFixed(i === 2 ? 0 : 1)}`);
+      });
+    }
+
+    /* The same figures appear in the deck's speaker notes, which were
+       left quoting the superseded n=1200 values when the README was
+       corrected. Any file restating them has to agree with the README. */
+    ['slides-demo.qmd', 'STATUS.md', 'SETUP.md'].forEach(function (f) {
+      let txt = '';
+      try { txt = fs.readFileSync(f, 'utf8'); } catch (e) { return; }
+      const stale = ['53.6%', '53.7%', '73.6%', '18.9 h']
+        .filter(x => txt.includes(x));
+      ok(`${f} does not quote superseded loading-dose figures`,
+         stale.length === 0, stale.join(' '));
+    });
+
+    // The claim the table is making: day 1 moves, steady state does not.
+    ok('the published contrast still holds at this n',
+       arms[0].day1.pta > 20 * arms[1].day1.pta &&
+       Math.abs(arms[0].ptaAtRefMic - arms[1].ptaAtRefMic) < 1,
+       `day-1 ${arms[1].day1.pta.toFixed(1)}% -> ${arms[0].day1.pta.toFixed(1)}%, ` +
+       `steady state ${arms[1].ptaAtRefMic.toFixed(1)}% -> ${arms[0].ptaAtRefMic.toFixed(1)}%`);
+
+    // And the reason the preset was safe to leave alone when the default
+    // changed: pinning 'interval' reproduces the pre-change schedule.
+    const pinned = P.buildSchedule({ dose: 1000, tau: 12, tinf: 1, nDoses: 4,
+      loadingDose: 2000, loadingTinf: 2, loadMode: 'interval' });
+    ok('the pinned preset schedule is the pre-change schedule, event for event',
+       pinned.t0Maint === 12 &&
+       JSON.stringify(pinned.events.map(e => [e.t0, e.tinf, e.rate])) ===
+       // load at t=0 PLUS the four maintenance doses, so five events.
+       JSON.stringify([[0, 2, 1000], [12, 1, 1000], [24, 1, 1000],
+                       [36, 1, 1000], [48, 1, 1000]]),
+       JSON.stringify(pinned.events.map(e => e.t0)));
+  }
+}
+
 console.log(fails === 0 ? '\nALL APP TESTS PASSED' : `\n${fails} APP TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);
