@@ -237,6 +237,7 @@ patient, regimens, target, MIC and seed.
 | `whole` | `1` to plot the whole course instead of one interval |
 | `load` | loading dose in mg for regimen A (`load2` for B) |
 | `loadtinf` | loading infusion duration in h (defaults to the maintenance infusion time, or 0.5 h for CI) |
+| `loadmode` | `interval` to delay maintenance by one full interval; default is to start as soon as the load finishes |
 | `bayes` | `0` to switch Bayesian forecasting off (default on) |
 | `preset` | load a named teaching scenario (model, target, regimens, covariates, MIC) in one parameter; explicit parameters still override it |
 | `trauma` | `1` for trauma (Romano model — raises clearance) |
@@ -560,11 +561,39 @@ questions with different answers. The second is the one a loading dose
 exists to change.
 
 Every regimen — intermittent or continuous — takes a **loading dose** and
-an optional load infusion time. For intermittent dosing the load is given
-at t = 0 and **maintenance begins one interval later**, which is how
-loading is actually prescribed (25 mg/kg now, then 15 mg/kg q12h starting
-in 12 h); putting the first maintenance dose alongside the load would
-double it rather than replace it.
+an optional load infusion time. For intermittent dosing you also choose
+**when maintenance starts**, because both patterns are prescribed and they
+are not interchangeable:
+
+| Setting | First maintenance dose | Typical use |
+|---|---|---|
+| **as soon as the load finishes** (default) | at the end of the loading infusion | beta-lactams: 2 g meropenem over 30 min, then 1 g q8h as 3 h infusions starting straight away |
+| **one interval after the load** | one full interval after t = 0 | vancomycin: 25–30 mg/kg now, then 15–20 mg/kg q12h starting in 12 h |
+
+The distinction matters, and not marginally. Gijsen meropenem, 1 g q8h as
+a 3 h infusion with a 2 g load over 30 min, eGFR 105, MIC 2 — free
+concentration in a typical patient:
+
+| t (h) | maintenance immediate | delayed one interval |
+|---|---|---|
+| 0.5 | 57.1 | 57.1 |
+| 4 | 20.2 | 9.0 |
+| 8 | **4.2** | **2.2** |
+
+Delaying the first maintenance dose by a full interval drops the patient
+to 2.2 mg/L against an MIC of 2 — on the threshold the load was given to
+stay clear of — and costs 20% of day-1 AUC (294 vs 235 mg·h/L). Starting
+maintenance immediately is why the load was given.
+
+Conversely, starting immediately after a *vancomycin* load would stack a
+maintenance dose on top of a load already sized to fill the volume of
+distribution. The `van-load` preset therefore pins `loadMode: 'interval'`
+rather than relying on the default, so that scenario is unaffected by what
+the default happens to be.
+
+A continuous infusion has no interval to delay by: the infusion runs from
+t = 0 alongside the load — the load going in through a second line or a
+syringe pump — so the choice does not appear for CI.
 
 The **first 24 hours** panel reports, per regimen:
 

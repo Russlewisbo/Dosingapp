@@ -408,7 +408,8 @@
         list.push({ label: 'A', dose: num(Q.dose, d.dose), tau: num(Q.tau, d.tau),
                     tinf: num(Q.tinf, d.tinf), on: true,
                     loadingDose: Q.load ? num(Q.load, 0) : undefined,
-                    loadingTinf: Q.loadtinf ? num(Q.loadtinf, 0) : undefined });
+                    loadingTinf: Q.loadtinf ? num(Q.loadtinf, 0) : undefined,
+                    loadMode: Q.loadmode === 'interval' ? 'interval' : undefined });
       }
       if (Q.dose2) {
         list.push({ label: 'B', dose: num(Q.dose2, d.dose), tau: num(Q.tau2, d.tau),
@@ -485,6 +486,26 @@
         'value="' + (r.loadingTinf || '') + '" placeholder="' +
         (r.mode === 'ci' ? '0.5' : (r.tinf || 1)) + '"></div>';
       d.appendChild(ld);
+      /* When maintenance starts is only a question once there IS a load,
+         so this appears with it rather than sitting inert on every row.
+         A continuous infusion has no interval to delay by — it runs from
+         t = 0 alongside the load — so the choice does not apply there. */
+      if (r.loadingDose > 0 && r.mode !== 'ci') {
+        var lm = document.createElement('div');
+        lm.className = 'row';
+        lm.style.cssText = 'margin-top:5px';
+        lm.innerHTML =
+          '<div><label>Maintenance starts</label>' +
+          '<select data-m="' + i + '">' +
+          '<option value="immediate"' +
+            (r.loadMode === 'interval' ? '' : ' selected') +
+            '>as soon as the load finishes</option>' +
+          '<option value="interval"' +
+            (r.loadMode === 'interval' ? ' selected' : '') +
+            '>one interval after the load</option>' +
+          '</select></div>';
+        d.appendChild(lm);
+      }
       host.appendChild(d);
     });
     host.querySelectorAll('input[data-f]').forEach(function (el) {
@@ -510,6 +531,15 @@
           var pwEl = $('plotWhole'); if (pwEl) pwEl.checked = true;
           var wwEl = $('wWhole'); if (wwEl) wwEl.value = '1';
         }
+        // The "maintenance starts" control only exists while a load does,
+        // so adding or clearing one changes the card, not just the plot.
+        if (f === 'loadingDose') { renderRegimens(); }
+        run();
+      });
+    });
+    host.querySelectorAll('select[data-m]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        S.regimens[+el.getAttribute('data-m')].loadMode = el.value;
         run();
       });
     });
@@ -670,6 +700,7 @@
       if (r.loadingDose > 0) {
         reg.loadingDose = r.loadingDose;
         if (r.loadingTinf > 0) reg.loadingTinf = r.loadingTinf;
+        if (r.loadMode) reg.loadMode = r.loadMode;
       }
       var res = P.simulate({
         model: m, cov: cov, regimen: reg, target: t, mics: mics,
@@ -1456,6 +1487,7 @@
     if (S.regimens[0] && S.regimens[0].loadingDose > 0) {
       p.push('load=' + S.regimens[0].loadingDose);
       if (S.regimens[0].loadingTinf > 0) p.push('loadtinf=' + S.regimens[0].loadingTinf);
+      if (S.regimens[0].loadMode === 'interval') p.push('loadmode=interval');
     }
     if (S.regimens[1] && S.regimens[1].loadingDose > 0) p.push('load2=' + S.regimens[1].loadingDose);
     if (!S.bayes) p.push('bayes=0');
@@ -1646,6 +1678,7 @@
         if (r.loadingDose > 0) {
           o.loadingDose = r.loadingDose;
           if (r.loadingTinf > 0) o.loadingTinf = r.loadingTinf;
+          if (r.loadMode) o.loadMode = r.loadMode;
         }
         return o;
       });

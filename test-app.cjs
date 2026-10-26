@@ -1025,5 +1025,58 @@ function boot(search) {
   }
 }
 
+/* ---- When maintenance starts after a loading dose ---- */
+{
+  const cells = (d, i) => [...d.querySelectorAll('#day1 tbody tr')[i || 0]
+    .querySelectorAll('td')].map(td => td.textContent.replace(/\s+/g, ' ').trim());
+  const Q = '?model=mem_gijsen2021&target=ft100&mic=2&dose=1000&tau=8&tinf=3';
+
+  {
+    const { d } = boot(Q + '&n=300');
+    ok('no maintenance-start control until there is a load to start after',
+       !d.querySelector('select[data-m]'));
+  }
+  {
+    const b = boot(Q + '&n=400');
+    const fld = b.d.querySelector('input[data-f="loadingDose"]');
+    fld.value = '2000';
+    fld.dispatchEvent(new b.w.Event('input', { bubbles: true }));
+    const sel = b.d.querySelector('select[data-m]');
+    ok('entering a load reveals the maintenance-start control', !!sel);
+    ok('it defaults to starting as soon as the load finishes',
+       sel && sel.value === 'immediate', sel && sel.value);
+    const immAuc = parseFloat(cells(b.d)[3]);
+    sel.value = 'interval';
+    sel.dispatchEvent(new b.w.Event('change', { bubbles: true }));
+    const itvAuc = parseFloat(cells(b.d)[3]);
+    ok('delaying maintenance by an interval lowers day-1 AUC',
+       itvAuc < immAuc, `${immAuc} -> ${itvAuc} mg·h/L`);
+    // The harness collects console/jsdom errors as `errors`, not `errs`.
+    ok('switching modes produces no script errors', b.errors.length === 0,
+       b.errors[0] || '');
+    // Clearing the load must take the control away with it.
+    fld.value = '';
+    fld.dispatchEvent(new b.w.Event('input', { bubbles: true }));
+    ok('clearing the load removes the maintenance-start control',
+       !b.d.querySelector('select[data-m]'));
+  }
+  {
+    const { w, d } = boot(Q + '&load=2000&loadtinf=0.5&loadmode=interval&n=300');
+    ok('loadmode is honoured from the URL',
+       d.querySelector('select[data-m]').value === 'interval');
+    d.getElementById('mkEmbed').dispatchEvent(new w.Event('click', { bubbles: true }));
+    ok('the embed URL round-trips loadmode',
+       /loadmode=interval/.test(d.getElementById('embedOut').value));
+  }
+  {
+    // The default changed from interval to immediate, so the vancomycin
+    // preset pins its own convention; this asserts it was not swept along.
+    const { d } = boot('?preset=van-load&n=400');
+    ok('the vancomycin preset pins the one-interval convention',
+       d.querySelector('select[data-m]').value === 'interval',
+       'so changing the engine default cannot alter this scenario');
+  }
+}
+
 console.log(fails === 0 ? '\nALL APP TESTS PASSED' : `\n${fails} APP TEST(S) FAILED`);
 process.exit(fails === 0 ? 0 : 1);

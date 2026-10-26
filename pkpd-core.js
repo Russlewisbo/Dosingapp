@@ -212,14 +212,20 @@
     var ev = [], i;
     if (reg.mode === 'ci') {
       var hours = reg.duration || 24 * (reg.days || 3);
-      // Optional loading dose in front of the continuous infusion.
+      /* Optional loading dose in front of the continuous infusion. The
+         infusion itself runs from t = 0 regardless, i.e. alongside the
+         load rather than after it — which is how it is given, the load
+         going in through a second line or a syringe pump while the
+         infusion runs. There is therefore no loadMode choice here: a
+         continuous infusion has no interval to delay by. */
       if (reg.loadingDose > 0) {
         var lt = reg.loadingTinf > 0 ? reg.loadingTinf : 0.5;
         ev.push({ t0: 0, tinf: lt, rate: reg.loadingDose / lt });
       }
       ev.push({ t0: 0, tinf: hours, rate: reg.dose24 / 24 });
       return { events: ev, tau: hours, tEnd: hours, ci: true,
-               loaded: reg.loadingDose > 0, t0Maint: 0 };
+               loaded: reg.loadingDose > 0, loadMode: 'immediate',
+               t0Maint: 0 };
     }
     var n = reg.nDoses || 1,
         tinf = Math.max(reg.tinf, 1e-6),
@@ -229,21 +235,33 @@
         // hours, and borrowing the CI default would give it an
         // unrealistically high peak.
         lt = loaded ? (reg.loadingTinf > 0 ? reg.loadingTinf : tinf) : 0,
-        /* Maintenance starts ONE INTERVAL after the load, which is how
-           loading is actually prescribed: 25 mg/kg now, then 15 mg/kg
-           q12h starting 12 h later. Putting the first maintenance dose at
-           t = 0 alongside the load would double the first dose instead of
-           replacing it. Every downstream interval index is therefore
-           offset by t0Maint, which is why it is returned rather than
-           recomputed by callers. */
-        t0M = loaded ? reg.tau : 0;
+        /* When does maintenance start after the load? Both patterns are
+           prescribed and they are not interchangeable:
+
+           'immediate' (default) — the first maintenance infusion begins
+             as soon as the load finishes, at t = loading infusion time.
+             This is what a beta-lactam gets: 2 g meropenem over 30 min,
+             then 1 g q8h as extended infusions starting straight away.
+             Waiting a full interval would leave a trough the loading
+             dose was given specifically to avoid.
+
+           'interval' — the first maintenance dose is given one interval
+             after the load, which is the vancomycin convention: 25-30
+             mg/kg now, then 15-20 mg/kg q12h starting in 12 h. Starting
+             immediately there would stack a maintenance dose on top of a
+             load already sized to fill the volume of distribution.
+
+           Every downstream interval index is offset by t0Maint, which is
+           why it is returned rather than recomputed by callers. */
+        loadMode = reg.loadMode === 'interval' ? 'interval' : 'immediate',
+        t0M = loaded ? (loadMode === 'interval' ? reg.tau : lt) : 0;
     if (loaded) ev.push({ t0: 0, tinf: lt, rate: reg.loadingDose / lt });
     for (i = 0; i < n; i++) {
       ev.push({ t0: t0M + i * reg.tau, tinf: tinf, rate: reg.dose / tinf });
     }
     return { events: ev, tau: reg.tau, tinf: tinf,
-             loaded: loaded, loadingTinf: lt, t0Maint: t0M,
-             tEnd: t0M + n * reg.tau, ci: false };
+             loaded: loaded, loadingTinf: lt, loadMode: loadMode,
+             t0Maint: t0M, tEnd: t0M + n * reg.tau, ci: false };
   }
 
   // Number of doses needed to be at (practical) steady state, then a few

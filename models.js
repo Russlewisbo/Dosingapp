@@ -930,7 +930,11 @@
     { id: 'van-load', label: 'Vancomycin: loading dose vs none',
       model: 'van_thomson2009', target: 'auc400',
       regimens: [
-        { label: 'A', dose: 1000, tau: 12, tinf: 1, loadingDose: 2000, loadingTinf: 2 },
+        { label: 'A', dose: 1000, tau: 12, tinf: 1, loadingDose: 2000, loadingTinf: 2,
+          // Vancomycin convention: the first maintenance dose follows one
+          // interval after the load, not as soon as it finishes. Pinned
+          // here so this scenario is unaffected by the engine default.
+          loadMode: 'interval' },
         { label: 'B', dose: 1000, tau: 12, tinf: 1 }
       ],
       cov: { wt: 80, age: 60, sex: 'M', scr: 1.0, scrUnit: 'mg/dL' },

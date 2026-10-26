@@ -16,12 +16,12 @@ file that embeds live in Quarto/reveal.js teaching slides.
 
 | | |
 |---|---|
-| Deliverable | `mipd-lab.html` — one self-contained file, 191 KB, no CDN, no server, no network requests (the only external URLs are the clickable DOI citation links) |
+| Deliverable | `mipd-lab.html` — one self-contained file, 194 KB, no CDN, no server, no network requests (the only external URLs are the clickable DOI citation links) |
 | Published at | <https://russlewisbo.github.io/Dosingapp/> — GitHub Pages, served from `main` at root, HTTPS enforced |
 | Models implemented | 13 (7 drugs) |
 | Models documented but not implemented | 0 |
 | Teaching presets | 13, each loadable with `?preset=<id>` |
-| Test checks passing | **583** across 6 suites |
+| Test checks passing | **605** across 6 suites |
 | Slide deck | `slides-demo.qmd`, renders under Quarto 1.6.43 |
 
 ### Architecture
@@ -212,8 +212,8 @@ asserts the inconsistency, so it is regression-tested rather than tuned away.
 
 | Suite | Checks | What it establishes |
 |---|---|---|
-| `test-core.cjs` | 107 | Engine against known answers: analytic 2-cmt vs RK4 integration, steady-state AUC over τ = Dose/CL, CI plateau = R₀/CL, MAP recovery, correlated-IIV and micro-constant samplers, renal estimators, per-model covariate equations, concentration-dependent and trough-ceiling targets |
-| `test-app.cjs` | 206 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, preset loading, disclosure of omissions, and documentation-consistency checks against the library |
+| `test-core.cjs` | 120 | Engine against known answers: analytic 2-cmt vs RK4 integration, steady-state AUC over τ = Dose/CL, CI plateau = R₀/CL, MAP recovery, correlated-IIV and micro-constant samplers, renal estimators, per-model covariate equations, concentration-dependent and trough-ceiling targets |
+| `test-app.cjs` | 215 | Headless DOM boot of the built file: rendering, interactions, per-model covariate controls, preset loading, disclosure of omissions, and documentation-consistency checks against the library |
 | `test-layout.cjs` | 174 | Canvas geometry: clipped text, overlapping tick labels, out-of-canvas vertices, NaN coordinates, at full / widget / 380 px widths |
 | `validate.cjs` | 76 | Published quantities reproduced from independently coded parameters (with two documented non-reproductions asserted as such) |
 | `test-slides.cjs` | 14 | Every widget URL in the *rendered* deck boots with the right model and target |
@@ -268,6 +268,18 @@ These counts are written by `sync-status.py`, which iterates to a fixed point be
   Cholesky sampling, and the matching full quadratic-form η′Ω⁻¹η MAP prior.
 
 ---
+
+## Behaviour changes
+
+- **2026-10-26 — maintenance now starts as soon as a loading dose
+  finishes**, where it previously waited one full dosing interval. The
+  old behaviour left a beta-lactam at the MIC threshold for hours (2.2 vs
+  4.2 mg/L at 8 h for 1 g q8h meropenem with a 2 g load) — exactly the
+  trough a loading dose is given to prevent. The previous behaviour
+  remains available per regimen and as `?loadmode=interval`, and is what
+  the `van-load` preset pins, since the vancomycin convention genuinely
+  is one interval. **A saved link carrying `load=` but no `loadmode=`
+  will now simulate the immediate start.**
 
 ## Known gaps
 

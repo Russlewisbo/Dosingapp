@@ -686,9 +686,15 @@ function rk4Two(p, R0, Tinf, tEnd, h) {
        load.events[0].t0 === 0 && Math.abs(load.events[0].tinf - 2) < 1e-12 &&
        Math.abs(load.events[0].rate - 1000) < 1e-9,
        `t0 ${load.events[0].t0}, tinf ${load.events[0].tinf}, rate ${load.events[0].rate}`);
-    ok('maintenance starts one interval AFTER the load, not alongside it',
-       load.t0Maint === 12 && load.events[1].t0 === 12,
-       `t0Maint ${load.t0Maint}, first maintenance at ${load.events[1].t0} h`);
+    // The DEFAULT is now immediate — maintenance begins when the load
+    // infusion ends. (Test 25 covers both modes; what matters here is
+    // that maintenance never runs on top of the load.)
+    ok('maintenance begins when the load infusion ends, never on top of it',
+       Math.abs(load.t0Maint - 2) < 1e-12 && load.events[1].t0 >= 2 - 1e-12,
+       `t0Maint ${load.t0Maint} h, load ran 2 h`);
+    ok('the vancomycin convention is still available and delays a full interval',
+       PKPD.buildSchedule({ dose: 1000, tau: 12, tinf: 1, nDoses: 3,
+         loadingDose: 2000, loadingTinf: 2, loadMode: 'interval' }).t0Maint === 12);
     ok('the loading infusion defaults to the maintenance infusion time',
        Math.abs(PKPD.buildSchedule({ dose: 1000, tau: 12, tinf: 1.5, nDoses: 2,
          loadingDose: 2000 }).events[0].tinf - 1.5) < 1e-12);
@@ -818,6 +824,86 @@ function rk4Two(p, R0, Tinf, tEnd, h) {
     ok('a trough-ceiling target has no time-to-target',
        PKPD.timeToTarget(() => 5, { type: 'cminceil', hi: 2 }, 2, 1, 24) === null);
   }
+}
+
+/* ---- 25. When maintenance starts after a loading dose.
+   Both patterns are prescribed: a beta-lactam load is followed straight
+   away by the first extended infusion, while a vancomycin load is
+   followed one interval later. Delaying a beta-lactam by a full interval
+   leaves exactly the trough the load was given to prevent. ---- */
+{
+  const reg = { dose: 1000, tau: 8, tinf: 3, nDoses: 3,
+                loadingDose: 2000, loadingTinf: 0.5 };
+  const imm = PKPD.buildSchedule(reg);
+  const itv = PKPD.buildSchedule(Object.assign({}, reg, { loadMode: 'interval' }));
+
+  ok('immediate is the default',
+     imm.loadMode === 'immediate' && imm.t0Maint === 0.5,
+     `t0Maint ${imm.t0Maint} h`);
+  ok('immediate starts maintenance when the load infusion ENDS',
+     Math.abs(imm.events[1].t0 - reg.loadingTinf) < 1e-12,
+     `first maintenance at ${imm.events[1].t0} h, load ran ${reg.loadingTinf} h`);
+  ok('immediate does not overlap the load with the first maintenance dose',
+     imm.events[1].t0 >= imm.events[0].t0 + imm.events[0].tinf - 1e-12);
+  ok('interval still delays maintenance by one full interval',
+     itv.loadMode === 'interval' && itv.t0Maint === 8 && itv.events[1].t0 === 8,
+     `t0Maint ${itv.t0Maint} h`);
+  ok('both modes give the same number of events',
+     imm.events.length === itv.events.length,
+     `${imm.events.length} vs ${itv.events.length}`);
+  ok('the interval spacing of maintenance doses is identical in both modes',
+     Math.abs((imm.events[2].t0 - imm.events[1].t0) -
+              (itv.events[2].t0 - itv.events[1].t0)) < 1e-12,
+     `${imm.events[2].t0 - imm.events[1].t0} h apart either way`);
+
+  // The clinical consequence, on a typical patient rather than by eye.
+  {
+    const m = MODELS.find(x => x.id === 'mem_gijsen2021');
+    const cov = { wt: 80, age: 60, sex: 'M', egfr: 105 };
+    const p = m.params(cov);
+    const cI = PKPD.concFn(p, m.ncmt, PKPD.buildSchedule(
+      Object.assign({}, reg, { nDoses: 4 })));
+    const cV = PKPD.concFn(p, m.ncmt, PKPD.buildSchedule(
+      Object.assign({}, reg, { nDoses: 4, loadMode: 'interval' })));
+    // Just before the delayed arm's first maintenance dose.
+    ok('delaying maintenance by an interval leaves a deeper trough',
+       m.fu * cV(8) < m.fu * cI(8),
+       `at t=8 h: immediate ${(m.fu * cI(8)).toFixed(2)} vs ` +
+       `delayed ${(m.fu * cV(8)).toFixed(2)} mg/L`);
+    ok('the two modes are identical until the load finishes',
+       Math.abs(cI(0.5) - cV(0.5)) < 1e-9,
+       `both ${cI(0.5).toFixed(2)} mg/L at t=0.5 h`);
+  }
+
+  // Day-1 exposure must be higher when maintenance is not delayed.
+  {
+    const m = MODELS.find(x => x.id === 'mem_gijsen2021');
+    const T = m.targets.find(t => t.id === 'ft100') || m.targets[0];
+    const cov = { wt: 80, age: 60, sex: 'M', egfr: 105 };
+    const base = { model: m, cov, target: T, mics: [2], mic: 2, n: 800, seed: 9 };
+    const a = PKPD.simulate(Object.assign({}, base,
+      { regimen: { dose: 1000, tau: 8, tinf: 3, loadingDose: 2000, loadingTinf: 0.5 } }));
+    const b = PKPD.simulate(Object.assign({}, base,
+      { regimen: { dose: 1000, tau: 8, tinf: 3, loadingDose: 2000, loadingTinf: 0.5,
+                   loadMode: 'interval' } }));
+    ok('day-1 AUC is higher when maintenance starts immediately',
+       a.day1.auc24.median > b.day1.auc24.median,
+       `${a.day1.auc24.median.toFixed(0)} vs ${b.day1.auc24.median.toFixed(0)} mg·h/L`);
+    ok('the load mode does not touch steady-state attainment',
+       Math.abs(a.ptaAtRefMic - b.ptaAtRefMic) < 1e-9,
+       `${a.ptaAtRefMic.toFixed(1)}% both ways`);
+  }
+
+  // A loading dose with no maintenance delay must not change a schedule
+  // that has no load at all.
+  ok('loadMode is inert without a loading dose',
+     PKPD.buildSchedule({ dose: 1000, tau: 8, tinf: 3, nDoses: 2,
+                          loadMode: 'interval' }).t0Maint === 0);
+  // Continuous infusion has no interval to delay by.
+  ok('a continuous infusion reports immediate regardless',
+     PKPD.buildSchedule({ mode: 'ci', dose24: 16000, duration: 48,
+                          loadingDose: 4000, loadMode: 'interval' }).loadMode === 'immediate',
+     'the infusion runs from t=0 alongside the load');
 }
 
 console.log(fails === 0 ? '\nALL TESTS PASSED' : `\n${fails} TEST(S) FAILED`);
